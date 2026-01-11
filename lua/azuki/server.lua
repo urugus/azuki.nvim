@@ -318,6 +318,30 @@ function M.commit(reading, candidate, callback)
   }, callback)
 end
 
+--- Send an adjust_segment request
+--- @param reading string Full hiragana reading
+--- @param segments table[] Current segment information
+--- @param segment_index number Segment index (0-indexed for server)
+--- @param direction string "shrink" or "extend"
+--- @param callback function Called with response
+function M.adjust_segment(reading, segments, segment_index, direction, callback)
+  if not M.session_id then
+    vim.notify("[azuki] Server not initialized yet", vim.log.levels.WARN)
+    if callback then
+      callback({ type = "error", error = "Server not initialized" })
+    end
+    return
+  end
+
+  M.send({
+    type = "adjust_segment",
+    reading = reading,
+    segments = segments,
+    segment_index = segment_index,
+    direction = direction,
+  }, callback)
+end
+
 --- Check if server is running
 --- @return boolean
 function M.is_active()

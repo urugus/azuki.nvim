@@ -1,6 +1,38 @@
 //! Kana-kanji conversion logic
 
 use crate::dictionary::Dictionary;
+use serde::Serialize;
+
+/// Segment information for UI display
+#[derive(Debug, Clone, Serialize)]
+pub struct Segment {
+    /// Reading (hiragana) for this segment
+    pub reading: String,
+    /// Start position in the original reading (character index)
+    pub start: usize,
+    /// Length of this segment (character count)
+    pub length: usize,
+    /// Conversion candidates for this segment
+    pub candidates: Vec<String>,
+}
+
+/// Conversion result with segment information
+#[derive(Debug, Clone, Serialize)]
+pub struct ConversionResult {
+    /// Combined candidates (first candidate from each segment joined)
+    pub combined_candidates: Vec<String>,
+    /// Individual segment information
+    pub segments: Vec<Segment>,
+}
+
+/// Direction for segment boundary adjustment
+#[derive(Debug, Clone, Copy)]
+pub enum AdjustDirection {
+    /// Make segment shorter (move boundary left)
+    Shrink,
+    /// Make segment longer (move boundary right)
+    Extend,
+}
 
 /// Kana-kanji converter
 pub struct Converter {
@@ -17,6 +49,7 @@ impl Converter {
     ///
     /// Uses longest-match algorithm to find candidates.
     /// Returns candidates for the entire reading, plus the reading itself as fallback.
+    #[allow(dead_code)]
     pub fn convert(&self, reading: &str) -> Vec<String> {
         if reading.is_empty() {
             return vec![];
@@ -62,6 +95,7 @@ impl Converter {
     }
 
     /// Segment reading into convertible parts using longest-match
+    #[allow(dead_code)]
     fn segment(&self, reading: &str) -> Vec<Vec<String>> {
         let dict = match &self.dictionary {
             Some(d) => d,
@@ -100,6 +134,230 @@ impl Converter {
         }
 
         result
+    }
+
+    /// Segment reading into convertible parts with position information
+    pub fn segment_with_info(&self, reading: &str) -> Vec<Segment> {
+        let dict = match &self.dictionary {
+            Some(d) => d,
+            None => {
+                // No dictionary, return entire reading as one segment
+                return vec![Segment {
+                    reading: reading.to_string(),
+                    start: 0,
+                    length: reading.chars().count(),
+                    candidates: vec![reading.to_string()],
+                }];
+            }
+        };
+
+        let chars: Vec<char> = reading.chars().collect();
+        let mut segments = Vec::new();
+        let mut pos = 0;
+
+        while pos < chars.len() {
+            let mut best_match: Option<(usize, Vec<String>)> = None;
+
+            // Try longest match first
+            for end in (pos + 1..=chars.len()).rev() {
+                let substr: String = chars[pos..end].iter().collect();
+                if let Some(candidates) = dict.lookup(&substr) {
+                    let mut cands = candidates.clone();
+                    // Add reading as fallback if not present
+                    if !cands.contains(&substr) {
+                        cands.push(substr.clone());
+                    }
+                    best_match = Some((end - pos, cands));
+                    break;
+                }
+            }
+
+            match best_match {
+                Some((len, candidates)) => {
+                    let seg_reading: String = chars[pos..pos + len].iter().collect();
+                    segments.push(Segment {
+                        reading: seg_reading,
+                        start: pos,
+                        length: len,
+                        candidates,
+                    });
+                    pos += len;
+                }
+                None => {
+                    // No match, take single character
+                    let ch: String = chars[pos..pos + 1].iter().collect();
+                    segments.push(Segment {
+                        reading: ch.clone(),
+                        start: pos,
+                        length: 1,
+                        candidates: vec![ch],
+                    });
+                    pos += 1;
+                }
+            }
+        }
+
+        segments
+    }
+
+    /// Convert with segment information
+    pub fn convert_with_segments(&self, reading: &str) -> ConversionResult {
+        if reading.is_empty() {
+            return ConversionResult {
+                combined_candidates: vec![],
+                segments: vec![],
+            };
+        }
+
+        let segments = self.segment_with_info(reading);
+
+        // Combine first candidates from each segment
+        let combined: String = segments
+            .iter()
+            .map(|s| s.candidates.first().unwrap_or(&s.reading).as_str())
+            .collect();
+
+        let mut combined_candidates = vec![combined];
+        // Add original reading as fallback
+        if combined_candidates[0] != reading {
+            combined_candidates.push(reading.to_string());
+        }
+
+        ConversionResult {
+            combined_candidates,
+            segments,
+        }
+    }
+
+    /// Adjust segment boundary
+    ///
+    /// Returns new segments after adjusting the boundary of the specified segment.
+    /// - Shrink: Move one character from this segment to the next
+    /// - Extend: Take one character from the next segment
+    pub fn adjust_segment(
+        &self,
+        reading: &str,
+        current_segments: &[Segment],
+        segment_index: usize,
+        direction: AdjustDirection,
+    ) -> Vec<Segment> {
+        let chars: Vec<char> = reading.chars().collect();
+
+        // Validate segment index
+        if segment_index >= current_segments.len() {
+            return current_segments.to_vec();
+        }
+
+        // Calculate new boundaries based on direction
+        let new_boundaries = match direction {
+            AdjustDirection::Shrink => {
+                // Cannot shrink if segment is 1 character
+                if current_segments[segment_index].length <= 1 {
+                    return current_segments.to_vec();
+                }
+                self.calculate_shrink_boundaries(current_segments, segment_index)
+            }
+            AdjustDirection::Extend => {
+                // Cannot extend if this is the last segment
+                if segment_index >= current_segments.len() - 1 {
+                    return current_segments.to_vec();
+                }
+                // Cannot extend if next segment is only 1 character
+                if current_segments[segment_index + 1].length <= 1 {
+                    return current_segments.to_vec();
+                }
+                self.calculate_extend_boundaries(current_segments, segment_index)
+            }
+        };
+
+        // Rebuild segments with new boundaries
+        self.rebuild_segments_from_boundaries(&chars, &new_boundaries)
+    }
+
+    /// Calculate boundaries after shrinking a segment
+    fn calculate_shrink_boundaries(&self, segments: &[Segment], index: usize) -> Vec<usize> {
+        let mut boundaries = Vec::new();
+        let mut pos = 0;
+
+        for (i, seg) in segments.iter().enumerate() {
+            if i == index {
+                // This segment loses one character
+                pos += seg.length - 1;
+            } else if i == index + 1 {
+                // Next segment gains one character (boundary moved left)
+                // The boundary is already adjusted by the previous segment
+                pos += seg.length + 1;
+            } else {
+                pos += seg.length;
+            }
+            boundaries.push(pos);
+        }
+
+        boundaries
+    }
+
+    /// Calculate boundaries after extending a segment
+    fn calculate_extend_boundaries(&self, segments: &[Segment], index: usize) -> Vec<usize> {
+        let mut boundaries = Vec::new();
+        let mut pos = 0;
+
+        for (i, seg) in segments.iter().enumerate() {
+            if i == index {
+                // This segment gains one character
+                pos += seg.length + 1;
+            } else if i == index + 1 {
+                // Next segment loses one character
+                pos += seg.length - 1;
+            } else {
+                pos += seg.length;
+            }
+            boundaries.push(pos);
+        }
+
+        boundaries
+    }
+
+    /// Rebuild segments from character boundaries
+    fn rebuild_segments_from_boundaries(
+        &self,
+        chars: &[char],
+        boundaries: &[usize],
+    ) -> Vec<Segment> {
+        let dict = &self.dictionary;
+        let mut segments = Vec::new();
+        let mut start = 0;
+
+        for &end in boundaries.iter() {
+            if start >= chars.len() || end <= start {
+                continue;
+            }
+
+            let seg_reading: String = chars[start..end].iter().collect();
+            let candidates = if let Some(d) = dict {
+                if let Some(cands) = d.lookup(&seg_reading) {
+                    let mut c = cands.clone();
+                    if !c.contains(&seg_reading) {
+                        c.push(seg_reading.clone());
+                    }
+                    c
+                } else {
+                    vec![seg_reading.clone()]
+                }
+            } else {
+                vec![seg_reading.clone()]
+            };
+
+            segments.push(Segment {
+                reading: seg_reading,
+                start,
+                length: end - start,
+                candidates,
+            });
+
+            start = end;
+        }
+
+        segments
     }
 
     /// Check if dictionary is loaded

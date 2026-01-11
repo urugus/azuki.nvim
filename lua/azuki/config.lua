@@ -12,6 +12,8 @@ M.defaults = {
   highlight = {
     pending = "AzukiPending",
     selected = "AzukiSelected",
+    segment = "AzukiSegment",
+    current_segment = "AzukiCurrentSegment",
   },
   learning = true,
   learning_file = vim.fn.stdpath("data") .. "/azuki/learning.json",

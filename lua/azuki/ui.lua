@@ -63,6 +63,51 @@ function M.show_candidate(bufnr, row, col, candidate, is_selected)
   })
 end
 
+--- Show segments with current segment highlighted
+--- @param bufnr number Buffer number
+--- @param row number Row number (0-indexed)
+--- @param col number Column number (0-indexed)
+--- @param segments table[] Array of segment objects from server
+--- @param current_segment number Current segment index (1-indexed)
+--- @param pending_romaji string Pending romaji input
+function M.show_segments(bufnr, row, col, segments, current_segment, pending_romaji)
+  M.clear(bufnr)
+
+  if #segments == 0 then
+    return
+  end
+
+  local hl = config.get("highlight")
+  local virt_text = {}
+
+  for i, seg in ipairs(segments) do
+    -- Get the selected candidate for this segment
+    local selected_idx = seg.selected_index or 1
+    local display = seg.candidates[selected_idx] or seg.reading
+
+    -- Use different highlight for current segment
+    local hl_group
+    if i == current_segment then
+      hl_group = hl.current_segment or hl.selected or "AzukiCurrentSegment"
+    else
+      hl_group = hl.segment or hl.pending or "AzukiSegment"
+    end
+
+    table.insert(virt_text, { display, hl_group })
+  end
+
+  -- Add pending romaji if any
+  if pending_romaji and pending_romaji ~= "" then
+    table.insert(virt_text, { pending_romaji, hl.pending })
+  end
+
+  M.current_mark_id = vim.api.nvim_buf_set_extmark(bufnr, M.ns_id, row, col, {
+    virt_text = virt_text,
+    virt_text_pos = "inline",
+    right_gravity = true,
+  })
+end
+
 --- Clear all extmarks in the buffer
 --- @param bufnr number Buffer number
 function M.clear(bufnr)
