@@ -251,6 +251,10 @@ impl Converter {
         // Calculate new boundaries based on direction
         let new_boundaries = match direction {
             AdjustDirection::Shrink => {
+                // Cannot shrink if this is the last segment (no next segment to receive char)
+                if segment_index >= current_segments.len() - 1 {
+                    return current_segments.to_vec();
+                }
                 // Cannot shrink if segment is 1 character
                 if current_segments[segment_index].length <= 1 {
                     return current_segments.to_vec();
