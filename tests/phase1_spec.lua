@@ -18,7 +18,9 @@ local function test(name, fn)
 end
 
 local function wait(ms)
-  vim.wait(ms, function() return false end)
+  vim.wait(ms, function()
+    return false
+  end)
 end
 
 print("=== azuki.nvim Phase 1 Tests ===\n")
@@ -48,7 +50,9 @@ test("Start server", function()
   end)
 
   -- Wait for server to start (max 5 seconds)
-  vim.wait(5000, function() return done end)
+  vim.wait(5000, function()
+    return done
+  end)
 
   assert(done, "server start callback not called")
   assert(success, "server failed to start")
@@ -74,7 +78,9 @@ test("Convert request", function()
     done = true
   end)
 
-  vim.wait(2000, function() return done end)
+  vim.wait(2000, function()
+    return done
+  end)
 
   assert(done, "convert callback not called")
   assert(response ~= nil, "response is nil")
@@ -96,7 +102,9 @@ test("Commit request", function()
     done = true
   end)
 
-  vim.wait(2000, function() return done end)
+  vim.wait(2000, function()
+    return done
+  end)
 
   assert(done, "commit callback not called")
   assert(response ~= nil, "response is nil")
@@ -114,7 +122,9 @@ test("Stop server", function()
     done = true
   end)
 
-  vim.wait(2000, function() return done end)
+  vim.wait(2000, function()
+    return done
+  end)
 
   assert(done, "stop callback not called")
 end)
