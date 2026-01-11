@@ -30,12 +30,14 @@ impl Converter {
             }
         };
 
+        let reading_str = reading.to_string();
+
         // Try exact match first
         if let Some(candidates) = dict.lookup(reading) {
             let mut result = candidates.clone();
-            // Add original reading as last fallback
-            if !result.contains(&reading.to_string()) {
-                result.push(reading.to_string());
+            // Add original reading as last fallback, if not already present
+            if !result.iter().any(|c| c == &reading_str) {
+                result.push(reading_str);
             }
             return result;
         }
@@ -71,20 +73,21 @@ impl Converter {
         let mut pos = 0;
 
         while pos < chars.len() {
-            let mut best_match: Option<(usize, Vec<String>)> = None;
+            let mut best_match: Option<(usize, &Vec<String>)> = None;
 
             // Try longest match first
             for end in (pos + 1..=chars.len()).rev() {
                 let substr: String = chars[pos..end].iter().collect();
                 if let Some(candidates) = dict.lookup(&substr) {
-                    best_match = Some((end - pos, candidates.clone()));
+                    best_match = Some((end - pos, candidates));
                     break;
                 }
             }
 
             match best_match {
                 Some((len, candidates)) => {
-                    result.push(candidates);
+                    // Clone only when adding to result
+                    result.push(candidates.clone());
                     pos += len;
                 }
                 None => {
