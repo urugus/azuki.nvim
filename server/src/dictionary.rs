@@ -1,8 +1,8 @@
 //! SKK dictionary loader and lookup
 
+use encoding_rs::{EUC_JP, UTF_8};
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::fs;
 use std::path::Path;
 
 /// SKK dictionary
@@ -22,20 +22,28 @@ impl Dictionary {
     /// Load dictionary from file
     ///
     /// Supports both EUC-JP and UTF-8 encoded files.
+    /// The encoding is auto-detected: UTF-8 is tried first, then EUC-JP.
+    ///
     /// SKK dictionary format:
     /// - Lines starting with `;` are comments
     /// - Entry format: `reading /candidate1/candidate2/.../`
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, DictionaryError> {
         let path = path.as_ref();
-        let file = File::open(path).map_err(|e| DictionaryError::Io(e.to_string()))?;
-        let reader = BufReader::new(file);
+        let bytes = fs::read(path).map_err(|e| DictionaryError::Io(e.to_string()))?;
+
+        // Try UTF-8 first, then EUC-JP
+        let (content, encoding_name) = decode_content(&bytes);
+
+        eprintln!(
+            "Loading dictionary from {} (detected encoding: {})",
+            path.display(),
+            encoding_name
+        );
 
         let mut dict = Self::new();
         let mut in_okuri_nasi = false;
 
-        for line in reader.lines() {
-            let line = line.map_err(|e| DictionaryError::Io(e.to_string()))?;
-
+        for line in content.lines() {
             // Skip empty lines
             if line.is_empty() {
                 continue;
@@ -62,7 +70,7 @@ impl Dictionary {
             }
 
             // Parse entry: "reading /candidate1/candidate2/.../"
-            if let Some((reading, candidates)) = parse_entry(&line) {
+            if let Some((reading, candidates)) = parse_entry(line) {
                 dict.okuri_nasi.insert(reading, candidates);
             }
         }
@@ -92,6 +100,19 @@ impl Dictionary {
     pub fn len(&self) -> usize {
         self.okuri_nasi.len()
     }
+}
+
+/// Decode file content, trying UTF-8 first, then EUC-JP
+fn decode_content(bytes: &[u8]) -> (String, &'static str) {
+    // Try UTF-8 first
+    let (decoded, encoding, had_errors) = UTF_8.decode(bytes);
+    if !had_errors {
+        return (decoded.into_owned(), encoding.name());
+    }
+
+    // Fall back to EUC-JP
+    let (decoded, encoding, _) = EUC_JP.decode(bytes);
+    (decoded.into_owned(), encoding.name())
 }
 
 /// Parse a single dictionary entry
@@ -173,7 +194,7 @@ mod tests {
     }
 
     #[test]
-    fn test_load_dictionary() {
+    fn test_load_dictionary_utf8() {
         let dict = Dictionary::load(test_dict_path()).unwrap();
         assert!(!dict.is_empty());
 
@@ -186,5 +207,29 @@ mod tests {
 
         // Non-existent entry
         assert!(dict.lookup("そんざいしない").is_none());
+    }
+
+    #[test]
+    fn test_decode_content_utf8() {
+        let utf8_bytes = "きょう /今日/".as_bytes();
+        let (decoded, encoding) = decode_content(utf8_bytes);
+        assert_eq!(decoded, "きょう /今日/");
+        assert_eq!(encoding, "UTF-8");
+    }
+
+    #[test]
+    fn test_decode_content_eucjp() {
+        // EUC-JP encoded "きょう /今日/"
+        // きょう = 0xA4 0xAD 0xA4 0xE7 0xA4 0xA6
+        // 今日 = 0xBA 0xA3 0xC6 0xFC
+        let eucjp_bytes: Vec<u8> = vec![
+            0xA4, 0xAD, 0xA4, 0xE7, 0xA4, 0xA6, // きょう
+            0x20, 0x2F, // " /"
+            0xBA, 0xA3, 0xC6, 0xFC, // 今日
+            0x2F, // "/"
+        ];
+        let (decoded, encoding) = decode_content(&eucjp_bytes);
+        assert_eq!(decoded, "きょう /今日/");
+        assert_eq!(encoding, "EUC-JP");
     }
 }
