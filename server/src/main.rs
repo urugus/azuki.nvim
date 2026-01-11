@@ -6,8 +6,10 @@ use std::io::{self, BufReader, Read, Write};
 const MAX_MESSAGE_SIZE: u32 = 4 * 1024 * 1024;
 
 // Request types
+// Fields marked with allow(dead_code) will be used in future phases
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[allow(dead_code)]
 enum Request {
     Init {
         seq: u64,
@@ -36,7 +38,9 @@ enum Request {
     },
 }
 
+// Options will be used in future phases for live conversion settings
 #[derive(Debug, Deserialize, Default)]
+#[allow(dead_code)]
 struct ConvertOptions {
     #[serde(default)]
     live: bool,
@@ -91,9 +95,9 @@ fn read_message<R: Read>(reader: &mut R) -> io::Result<Option<String>> {
     let mut buf = vec![0u8; len as usize];
     reader.read_exact(&mut buf)?;
 
-    String::from_utf8(buf).map(Some).map_err(|e| {
-        io::Error::new(io::ErrorKind::InvalidData, format!("Invalid UTF-8: {}", e))
-    })
+    String::from_utf8(buf)
+        .map(Some)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Invalid UTF-8: {}", e)))
 }
 
 /// Write a length-prefixed message to stdout
@@ -116,10 +120,13 @@ fn handle_request(request: Request) -> Response {
     match request {
         Request::Init { seq, session_id } => {
             let session_id = session_id.unwrap_or_else(|| {
-                format!("session_{}", std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis())
+                format!(
+                    "session_{}",
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis()
+                )
             });
             Response::InitResult {
                 seq,
@@ -181,8 +188,8 @@ fn main() -> io::Result<()> {
                 let is_shutdown = matches!(request, Request::Shutdown { .. });
                 let response = handle_request(request);
                 if is_shutdown {
-                    let response_json = serde_json::to_string(&response)
-                        .expect("Failed to serialize response");
+                    let response_json =
+                        serde_json::to_string(&response).expect("Failed to serialize response");
                     write_message(&mut writer, &response_json)?;
                     eprintln!("Shutdown requested, exiting");
                     break;
@@ -196,8 +203,7 @@ fn main() -> io::Result<()> {
             },
         };
 
-        let response_json =
-            serde_json::to_string(&response).expect("Failed to serialize response");
+        let response_json = serde_json::to_string(&response).expect("Failed to serialize response");
         write_message(&mut writer, &response_json)?;
     }
 
