@@ -17,6 +17,7 @@ on:
       - ".github/workflows/lua.yml"
       - ".luacheckrc"
       - "stylua.toml"
+  workflow_dispatch:
 
 jobs:
   stylua:
