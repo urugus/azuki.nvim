@@ -72,4 +72,7 @@ jobs:
       - name: Run Lua tests
         run: |
           nvim --version
-          nvim --clean --headless -c "set rtp+=." -c "luafile tests/phase1_spec.lua"
+          for f in tests/*_spec.lua; do
+            echo "=== Running $f ==="
+            nvim --clean --headless -c "set rtp+=." -c "luafile $f"
+          done
