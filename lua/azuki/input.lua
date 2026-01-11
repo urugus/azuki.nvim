@@ -297,8 +297,9 @@ end
 
 --- Select next candidate
 function M.next_candidate()
-  if M.state.hiragana == "" and M.state.romaji_buffer == "" then
-    -- Nothing to convert, pass through space
+  if M.state.hiragana == "" then
+    -- No hiragana to convert, pass through space
+    -- (includes case where only romaji_buffer has partial input like "n")
     vim.api.nvim_feedkeys(" ", "n", false)
     return
   end
@@ -336,6 +337,12 @@ end
 
 --- Cancel conversion (revert to hiragana)
 function M.cancel()
+  -- Cancel any pending debounce timer
+  M._cancel_debounce()
+
+  -- Invalidate any in-flight server responses by incrementing last_seq
+  M.state.last_seq = server.get_seq() + 1000
+
   M.state.candidates = {}
   M.state.selected_index = 0
   M._update_display()
