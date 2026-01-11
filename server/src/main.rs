@@ -2,7 +2,7 @@ mod converter;
 mod dictionary;
 
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
-use converter::Converter;
+use converter::{AdjustDirection, Converter, Segment};
 use dictionary::Dictionary;
 use serde::{Deserialize, Serialize};
 use std::io::{self, BufReader, Read, Write};
@@ -98,6 +98,23 @@ enum Request {
         #[serde(default)]
         session_id: Option<String>,
     },
+    AdjustSegment {
+        seq: u64,
+        session_id: String,
+        reading: String,
+        segments: Vec<SegmentInput>,
+        segment_index: usize,
+        direction: String,
+    },
+}
+
+/// Input segment for adjust_segment request
+#[derive(Debug, Deserialize)]
+struct SegmentInput {
+    reading: String,
+    start: usize,
+    length: usize,
+    candidates: Vec<String>,
 }
 
 // Options will be used in future phases for live conversion settings
@@ -106,6 +123,26 @@ enum Request {
 struct ConvertOptions {
     #[serde(default)]
     live: bool,
+}
+
+/// Segment info for response
+#[derive(Debug, Serialize)]
+struct SegmentInfo {
+    reading: String,
+    start: usize,
+    length: usize,
+    candidates: Vec<String>,
+}
+
+impl From<Segment> for SegmentInfo {
+    fn from(seg: Segment) -> Self {
+        Self {
+            reading: seg.reading,
+            start: seg.start,
+            length: seg.length,
+            candidates: seg.candidates,
+        }
+    }
 }
 
 // Response types
@@ -122,7 +159,12 @@ enum Response {
         seq: u64,
         session_id: String,
         candidates: Vec<String>,
-        selected_index: usize,
+        segments: Vec<SegmentInfo>,
+    },
+    AdjustSegmentResult {
+        seq: u64,
+        session_id: String,
+        segments: Vec<SegmentInfo>,
     },
     CommitResult {
         seq: u64,
@@ -178,12 +220,12 @@ impl Server {
                 cursor: _,
                 options: _,
             } => {
-                let candidates = self.converter.convert(&reading);
+                let result = self.converter.convert_with_segments(&reading);
                 Response::ConvertResult {
                     seq,
                     session_id,
-                    candidates,
-                    selected_index: 0,
+                    candidates: result.combined_candidates,
+                    segments: result.segments.into_iter().map(SegmentInfo::from).collect(),
                 }
             }
             Request::Commit {
@@ -200,6 +242,49 @@ impl Server {
                 }
             }
             Request::Shutdown { seq, .. } => Response::ShutdownResult { seq },
+            Request::AdjustSegment {
+                seq,
+                session_id,
+                reading,
+                segments,
+                segment_index,
+                direction,
+            } => {
+                // Convert input segments to Segment structs
+                let current_segments: Vec<Segment> = segments
+                    .into_iter()
+                    .map(|s| Segment {
+                        reading: s.reading,
+                        start: s.start,
+                        length: s.length,
+                        candidates: s.candidates,
+                    })
+                    .collect();
+
+                // Parse direction
+                let dir = match direction.as_str() {
+                    "shrink" => AdjustDirection::Shrink,
+                    "extend" => AdjustDirection::Extend,
+                    _ => {
+                        return Response::Error {
+                            seq,
+                            session_id: Some(session_id),
+                            error: format!("Invalid direction: {}", direction),
+                        };
+                    }
+                };
+
+                // Adjust segments
+                let new_segments =
+                    self.converter
+                        .adjust_segment(&reading, &current_segments, segment_index, dir);
+
+                Response::AdjustSegmentResult {
+                    seq,
+                    session_id,
+                    segments: new_segments.into_iter().map(SegmentInfo::from).collect(),
+                }
+            }
         }
     }
 }

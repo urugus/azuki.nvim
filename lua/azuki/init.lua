@@ -13,6 +13,8 @@ local function setup_highlights()
   local hl = config.get("highlight")
   vim.api.nvim_set_hl(0, hl.pending, { underline = true, default = true })
   vim.api.nvim_set_hl(0, hl.selected, { reverse = true, default = true })
+  vim.api.nvim_set_hl(0, hl.segment, { underline = true, default = true })
+  vim.api.nvim_set_hl(0, hl.current_segment, { reverse = true, bold = true, default = true })
 end
 
 --- Setup user commands

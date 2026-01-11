@@ -13,8 +13,10 @@ M.state = {
   enabled = false, -- Japanese input mode enabled
   romaji_buffer = "", -- Romaji input buffer
   hiragana = "", -- Converted hiragana
-  candidates = {}, -- Conversion candidates
+  candidates = {}, -- Conversion candidates (for fallback)
   selected_index = 0, -- Selected candidate index (1-indexed, 0 = no selection)
+  segments = {}, -- Segment information from server
+  current_segment = 1, -- Current segment index (1-indexed)
   preedit_start_col = 0, -- Input start column
   preedit_start_row = 0, -- Input start row
   bufnr = nil, -- Current buffer number
@@ -51,6 +53,8 @@ function M._do_enable()
   M.state.hiragana = ""
   M.state.candidates = {}
   M.state.selected_index = 0
+  M.state.segments = {}
+  M.state.current_segment = 1
   M.state.bufnr = vim.api.nvim_get_current_buf()
   M.state.last_seq = 0
 
@@ -88,6 +92,8 @@ function M.disable()
   M.state.hiragana = ""
   M.state.candidates = {}
   M.state.selected_index = 0
+  M.state.segments = {}
+  M.state.current_segment = 1
   M.state.last_seq = 0
 
   -- Clear UI
@@ -155,6 +161,24 @@ function M._setup_key_hooks()
   vim.keymap.set("i", "<C-g>", function()
     M.cancel()
   end, { buffer = bufnr, noremap = true })
+
+  -- Segment navigation keys
+  vim.keymap.set("i", "<Tab>", function()
+    M.next_segment()
+  end, { buffer = bufnr, noremap = true })
+
+  vim.keymap.set("i", "<S-Tab>", function()
+    M.prev_segment()
+  end, { buffer = bufnr, noremap = true })
+
+  -- Segment boundary adjustment keys
+  vim.keymap.set("i", "<S-Left>", function()
+    M.shrink_segment()
+  end, { buffer = bufnr, noremap = true })
+
+  vim.keymap.set("i", "<S-Right>", function()
+    M.extend_segment()
+  end, { buffer = bufnr, noremap = true })
 end
 
 --- Map a single key to input handler
@@ -192,6 +216,10 @@ function M._teardown_key_hooks()
   pcall(vim.keymap.del, "i", "<Space>", { buffer = bufnr })
   pcall(vim.keymap.del, "i", "<S-Space>", { buffer = bufnr })
   pcall(vim.keymap.del, "i", "<C-g>", { buffer = bufnr })
+  pcall(vim.keymap.del, "i", "<Tab>", { buffer = bufnr })
+  pcall(vim.keymap.del, "i", "<S-Tab>", { buffer = bufnr })
+  pcall(vim.keymap.del, "i", "<S-Left>", { buffer = bufnr })
+  pcall(vim.keymap.del, "i", "<S-Right>", { buffer = bufnr })
 end
 
 --- Handle input key
@@ -212,9 +240,11 @@ function M.handle_input(key)
   M.state.hiragana = M.state.hiragana .. hiragana
   M.state.romaji_buffer = remaining
 
-  -- Clear candidates when input changes
+  -- Clear candidates and segments when input changes
   M.state.candidates = {}
   M.state.selected_index = 0
+  M.state.segments = {}
+  M.state.current_segment = 1
 
   -- Update display
   M._update_display()
@@ -265,13 +295,27 @@ function M._request_conversion()
     end
 
     if response.type == "convert_result" then
+      -- Store segment information
+      if response.segments and #response.segments > 0 then
+        M.state.segments = response.segments
+        M.state.current_segment = 1
+        -- Initialize selected_index for each segment to 1
+        for _, seg in ipairs(M.state.segments) do
+          seg.selected_index = 1
+        end
+      else
+        M.state.segments = {}
+        M.state.current_segment = 1
+      end
+
+      -- Keep candidates for fallback
       M.state.candidates = response.candidates or {}
-      -- Auto-select first candidate for live conversion display
       if #M.state.candidates > 0 then
         M.state.selected_index = 1
       else
         M.state.selected_index = 0
       end
+
       M._update_display()
     end
   end)
@@ -284,8 +328,18 @@ function M._update_display()
     return
   end
 
-  if M.state.selected_index > 0 and #M.state.candidates > 0 then
-    -- Show selected candidate
+  if #M.state.segments > 0 then
+    -- Show segments
+    ui.show_segments(
+      bufnr,
+      M.state.preedit_start_row,
+      M.state.preedit_start_col,
+      M.state.segments,
+      M.state.current_segment,
+      M.state.romaji_buffer
+    )
+  elseif M.state.selected_index > 0 and #M.state.candidates > 0 then
+    -- Fallback: Show selected candidate
     local display_text = M.state.candidates[M.state.selected_index] .. M.state.romaji_buffer
     ui.show_candidate(bufnr, M.state.preedit_start_row, M.state.preedit_start_col, display_text, true)
   else
@@ -295,44 +349,150 @@ function M._update_display()
   end
 end
 
---- Select next candidate
+--- Select next candidate (for current segment or fallback)
 function M.next_candidate()
   if M.state.hiragana == "" then
     -- No hiragana to convert, pass through space
-    -- (includes case where only romaji_buffer has partial input like "n")
     vim.api.nvim_feedkeys(" ", "n", false)
     return
   end
 
+  -- Segment mode: cycle candidate for current segment
+  if #M.state.segments > 0 then
+    local seg = M.state.segments[M.state.current_segment]
+    if seg and #seg.candidates > 0 then
+      seg.selected_index = (seg.selected_index or 1) % #seg.candidates + 1
+      M._update_display()
+    end
+    return
+  end
+
+  -- Fallback mode: cycle global candidates
   if #M.state.candidates == 0 then
-    -- No candidates yet, request conversion immediately
     M._cancel_debounce()
     M._request_conversion()
     return
   end
 
-  -- Cycle to next candidate
-  M.state.selected_index = M.state.selected_index + 1
-  if M.state.selected_index > #M.state.candidates then
-    M.state.selected_index = 1
-  end
-
+  M.state.selected_index = M.state.selected_index % #M.state.candidates + 1
   M._update_display()
 end
 
---- Select previous candidate
+--- Select previous candidate (for current segment or fallback)
 function M.prev_candidate()
+  -- Segment mode: cycle candidate for current segment
+  if #M.state.segments > 0 then
+    local seg = M.state.segments[M.state.current_segment]
+    if seg and #seg.candidates > 0 then
+      local idx = (seg.selected_index or 1) - 1
+      if idx < 1 then
+        idx = #seg.candidates
+      end
+      seg.selected_index = idx
+      M._update_display()
+    end
+    return
+  end
+
+  -- Fallback mode
   if #M.state.candidates == 0 then
     return
   end
 
-  -- Cycle to previous candidate
   M.state.selected_index = M.state.selected_index - 1
   if M.state.selected_index < 1 then
     M.state.selected_index = #M.state.candidates
   end
 
   M._update_display()
+end
+
+--- Move to next segment
+function M.next_segment()
+  if #M.state.segments == 0 then
+    return
+  end
+
+  if M.state.current_segment < #M.state.segments then
+    M.state.current_segment = M.state.current_segment + 1
+    M._update_display()
+  end
+end
+
+--- Move to previous segment
+function M.prev_segment()
+  if #M.state.segments == 0 then
+    return
+  end
+
+  if M.state.current_segment > 1 then
+    M.state.current_segment = M.state.current_segment - 1
+    M._update_display()
+  end
+end
+
+--- Shrink current segment (move boundary left)
+function M.shrink_segment()
+  if #M.state.segments == 0 then
+    return
+  end
+
+  local seg = M.state.segments[M.state.current_segment]
+  if not seg or seg.length <= 1 then
+    return -- Cannot shrink further
+  end
+
+  server.adjust_segment(
+    M.state.hiragana,
+    M.state.segments,
+    M.state.current_segment - 1, -- 0-indexed for server
+    "shrink",
+    function(response)
+      if response.type == "adjust_segment_result" then
+        M.state.segments = response.segments
+        -- Initialize selected_index for each segment
+        for _, s in ipairs(M.state.segments) do
+          s.selected_index = 1
+        end
+        M._update_display()
+      end
+    end
+  )
+end
+
+--- Extend current segment (move boundary right)
+function M.extend_segment()
+  if #M.state.segments == 0 then
+    return
+  end
+
+  -- Cannot extend if this is the last segment
+  if M.state.current_segment >= #M.state.segments then
+    return
+  end
+
+  -- Cannot extend if next segment has only 1 character
+  local next_seg = M.state.segments[M.state.current_segment + 1]
+  if not next_seg or next_seg.length <= 1 then
+    return
+  end
+
+  server.adjust_segment(
+    M.state.hiragana,
+    M.state.segments,
+    M.state.current_segment - 1, -- 0-indexed for server
+    "extend",
+    function(response)
+      if response.type == "adjust_segment_result" then
+        M.state.segments = response.segments
+        -- Initialize selected_index for each segment
+        for _, s in ipairs(M.state.segments) do
+          s.selected_index = 1
+        end
+        M._update_display()
+      end
+    end
+  )
 end
 
 --- Cancel conversion (revert to hiragana)
@@ -345,7 +505,21 @@ function M.cancel()
 
   M.state.candidates = {}
   M.state.selected_index = 0
+  M.state.segments = {}
+  M.state.current_segment = 1
   M._update_display()
+end
+
+--- Get combined text from segments
+--- @return string Combined text from all segments
+local function get_segments_text()
+  local parts = {}
+  for _, seg in ipairs(M.state.segments) do
+    local idx = seg.selected_index or 1
+    local text = seg.candidates[idx] or seg.reading
+    table.insert(parts, text)
+  end
+  return table.concat(parts)
 end
 
 --- Commit selected candidate (internal, for auto-commit on input)
@@ -356,7 +530,10 @@ function M._commit_selected()
   end
 
   local commit_text
-  if M.state.selected_index > 0 and #M.state.candidates > 0 then
+  if #M.state.segments > 0 then
+    -- Segment mode: combine selected candidates from all segments
+    commit_text = get_segments_text()
+  elseif M.state.selected_index > 0 and #M.state.candidates > 0 then
     commit_text = M.state.candidates[M.state.selected_index]
   else
     commit_text = M.state.hiragana
@@ -392,6 +569,8 @@ function M._commit_selected()
   M.state.hiragana = ""
   M.state.candidates = {}
   M.state.selected_index = 0
+  M.state.segments = {}
+  M.state.current_segment = 1
   M.state.preedit_start_row = row
   M.state.preedit_start_col = new_col
 end
@@ -408,7 +587,10 @@ function M.commit()
 
   -- Determine text to commit
   local base_text
-  if M.state.selected_index > 0 and #M.state.candidates > 0 then
+  if #M.state.segments > 0 then
+    -- Segment mode: combine selected candidates from all segments
+    base_text = get_segments_text()
+  elseif M.state.selected_index > 0 and #M.state.candidates > 0 then
     base_text = M.state.candidates[M.state.selected_index]
   else
     base_text = M.state.hiragana
@@ -445,8 +627,8 @@ function M.commit()
   vim.api.nvim_win_set_cursor(0, { row + 1, new_col })
 
   -- Send commit to server for learning
-  if M.state.hiragana ~= "" and M.state.selected_index > 0 then
-    server.commit(M.state.hiragana, M.state.candidates[M.state.selected_index], nil)
+  if M.state.hiragana ~= "" then
+    server.commit(M.state.hiragana, base_text, nil)
   end
 
   -- Reset state (keep mode enabled)
@@ -454,6 +636,8 @@ function M.commit()
   M.state.hiragana = ""
   M.state.candidates = {}
   M.state.selected_index = 0
+  M.state.segments = {}
+  M.state.current_segment = 1
   M.state.preedit_start_row = row
   M.state.preedit_start_col = new_col
 end
