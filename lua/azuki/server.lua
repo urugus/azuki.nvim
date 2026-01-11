@@ -13,6 +13,7 @@ M.session_id = nil
 M.callbacks = {}
 M.read_buffer = ""
 M.is_running = false
+M.stop_callback = nil -- Callback to invoke after server exit
 
 --- Configuration
 local config = {
@@ -183,6 +184,13 @@ function M.start(opts, callback)
       if code ~= 0 then
         vim.notify("[azuki] Server exited with code " .. code, vim.log.levels.WARN)
       end
+
+      -- Invoke stop callback after cleanup is complete
+      if M.stop_callback then
+        local cb = M.stop_callback
+        M.stop_callback = nil
+        cb()
+      end
     end)
   end)
 
@@ -249,7 +257,7 @@ function M.start(opts, callback)
 end
 
 --- Stop the server process
---- @param callback function|nil Called when server is stopped
+--- @param callback function|nil Called when server is stopped and cleanup is complete
 function M.stop(callback)
   if not M.is_running then
     if callback then
@@ -258,10 +266,11 @@ function M.stop(callback)
     return
   end
 
+  -- Store callback to be invoked after exit cleanup
+  M.stop_callback = callback
+
   M.send({ type = "shutdown" }, function()
-    if callback then
-      callback()
-    end
+    -- Callback will be invoked by exit handler after cleanup
   end)
 end
 
@@ -270,6 +279,14 @@ end
 --- @param opts table|nil Options (cursor, live, etc.)
 --- @param callback function Called with response
 function M.convert(reading, opts, callback)
+  if not M.session_id then
+    vim.notify("[azuki] Server not initialized yet", vim.log.levels.WARN)
+    if callback then
+      callback({ type = "error", error = "Server not initialized" })
+    end
+    return
+  end
+
   opts = opts or {}
   M.send({
     type = "convert",
@@ -286,6 +303,14 @@ end
 --- @param candidate string Selected candidate
 --- @param callback function|nil Called with response
 function M.commit(reading, candidate, callback)
+  if not M.session_id then
+    vim.notify("[azuki] Server not initialized yet", vim.log.levels.WARN)
+    if callback then
+      callback({ type = "error", error = "Server not initialized" })
+    end
+    return
+  end
+
   M.send({
     type = "commit",
     reading = reading,
