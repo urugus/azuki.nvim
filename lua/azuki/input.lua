@@ -3,6 +3,7 @@
 
 local M = {}
 
+local config = require("azuki.config")
 local romaji = require("azuki.romaji")
 local ui = require("azuki.ui")
 local server = require("azuki.server")
@@ -27,7 +28,7 @@ function M.enable()
 
   -- Start server if not running
   if not server.is_active() then
-    server.start(nil, function(success)
+    server.start({ server_path = config.get("server_path") }, function(success)
       if success then
         M._do_enable()
       else
@@ -211,6 +212,12 @@ function M.commit()
   if commit_text == "" then
     -- Nothing to commit, pass through Enter
     vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<CR>", true, false, true), "n", false)
+    -- Update preedit anchor after Enter is processed
+    vim.schedule(function()
+      local cursor = vim.api.nvim_win_get_cursor(0)
+      M.state.preedit_start_row = cursor[1] - 1
+      M.state.preedit_start_col = cursor[2]
+    end)
     return
   end
 
