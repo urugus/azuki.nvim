@@ -4,7 +4,6 @@
 local input = require("azuki.input")
 local ui = require("azuki.ui")
 local server = require("azuki.server")
-local config = require("azuki.config")
 
 local passed = 0
 local failed = 0
@@ -18,12 +17,6 @@ local function test(name, fn)
     print("FAIL: " .. name .. " - " .. tostring(err))
     failed = failed + 1
   end
-end
-
-local function wait(ms)
-  vim.wait(ms, function()
-    return false
-  end)
 end
 
 -- Helper: Reset input state
