@@ -1,0 +1,75 @@
+name: Lua
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "lua/**"
+      - "tests/**"
+      - ".github/workflows/lua.yml"
+      - ".luacheckrc"
+      - "stylua.toml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "lua/**"
+      - "tests/**"
+      - ".github/workflows/lua.yml"
+      - ".luacheckrc"
+      - "stylua.toml"
+  workflow_dispatch:
+
+jobs:
+  stylua:
+    name: StyLua
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: JohnnyMorganz/stylua-action@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          version: latest
+          args: --check lua/ tests/
+
+  luacheck:
+    name: Luacheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install luacheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lua5.1 luarocks
+          sudo luarocks install luacheck
+      - name: Run luacheck
+        run: luacheck lua/ tests/
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Install Rust and build server
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server
+      - name: Build azuki-server
+        run: cargo build --manifest-path server/Cargo.toml
+
+      # Install Neovim
+      - name: Install Neovim
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build gettext cmake unzip curl
+          git clone --depth 1 --branch stable https://github.com/neovim/neovim.git /tmp/neovim
+          cd /tmp/neovim
+          make CMAKE_BUILD_TYPE=Release
+          sudo make install
+
+      # Run tests
+      - name: Run Lua tests
+        run: |
+          nvim --version
+          nvim --clean --headless -c "set rtp+=." -c "luafile tests/phase1_spec.lua"
