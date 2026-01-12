@@ -67,10 +67,11 @@ impl Converter {
         while pos < chars.len() {
             let mut best_match: Option<(usize, String)> = None;
 
-            // Try longest match first
+            // Try longest match first (including okuri-ari)
             for end in (pos + 1..=chars.len()).rev() {
                 let substr: String = chars[pos..end].iter().collect();
-                if dict.lookup(&substr).is_some() {
+                // Use has_candidates to check both okuri-nasi and okuri-ari
+                if dict.has_candidates(&substr) {
                     best_match = Some((end - pos, substr));
                     break;
                 }
@@ -78,7 +79,8 @@ impl Converter {
 
             match best_match {
                 Some((len, seg_reading)) => {
-                    let candidates = dict.lookup_with_fallback(&seg_reading);
+                    // Use lookup_combined to include okuri-ari candidates
+                    let candidates = dict.lookup_combined(&seg_reading);
                     segments.push(Segment {
                         reading: seg_reading,
                         start: pos,
@@ -242,8 +244,9 @@ impl Converter {
             }
 
             let seg_reading: String = chars[start..end].iter().collect();
+            // Use lookup_combined to include okuri-ari candidates
             let candidates = match &self.dictionary {
-                Some(dict) => dict.lookup_with_fallback(&seg_reading),
+                Some(dict) => dict.lookup_combined(&seg_reading),
                 None => vec![seg_reading.clone()],
             };
 
@@ -336,5 +339,49 @@ mod tests {
         // No match in dictionary
         let result = converter.convert_with_segments("あいうえお");
         assert!(result.combined_candidates.iter().any(|c| c == "あいうえお"));
+    }
+
+    #[test]
+    fn test_convert_okuri_ari() {
+        let dict = load_test_dictionary();
+        let converter = Converter::new(Some(dict));
+
+        // "かく" should have okuri-ari candidates "書く", "欠く"
+        let result = converter.convert_with_segments("かく");
+        // Check segments have okuri-ari candidates
+        assert!(!result.segments.is_empty());
+        let segment = &result.segments[0];
+        assert!(segment.candidates.contains(&"書く".to_string()));
+        assert!(segment.candidates.contains(&"欠く".to_string()));
+    }
+
+    #[test]
+    fn test_convert_okuri_ari_combined_first() {
+        let dict = load_test_dictionary();
+        let converter = Converter::new(Some(dict));
+
+        // "よむ" -> "読む"
+        let result = converter.convert_with_segments("よむ");
+        // First combined candidate should be "読む"
+        assert!(result.combined_candidates.iter().any(|c| c == "読む"));
+    }
+
+    #[test]
+    fn test_convert_mixed_okuri_ari_and_nasi() {
+        let dict = load_test_dictionary();
+        let converter = Converter::new(Some(dict));
+
+        // "きょうかく" -> "今日" + "かく"
+        // "かく" segment should have okuri-ari candidates
+        let result = converter.convert_with_segments("きょうかく");
+
+        // Should have 2 segments: "きょう" and "かく"
+        assert!(result.segments.len() >= 2);
+
+        // Find the "かく" segment
+        let kaku_segment = result.segments.iter().find(|s| s.reading == "かく");
+        assert!(kaku_segment.is_some());
+        let kaku = kaku_segment.unwrap();
+        assert!(kaku.candidates.contains(&"書く".to_string()));
     }
 }
