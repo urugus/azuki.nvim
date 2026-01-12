@@ -123,7 +123,7 @@ impl Server {
             } => {
                 // Try Zenzai first if enabled
                 #[cfg(feature = "zenzai")]
-                let zenzai_candidates = if self.is_zenzai_enabled() {
+                let zenzai_result = if self.is_zenzai_enabled() {
                     if let Some(ref mut zenzai) = self.zenzai {
                         match zenzai.convert(&reading, None) {
                             Ok(candidates) => {
@@ -143,28 +143,34 @@ impl Server {
                 };
 
                 #[cfg(not(feature = "zenzai"))]
-                let zenzai_candidates: Option<Vec<String>> = None;
+                let zenzai_result: Option<Vec<String>> = None;
 
-                // Get dictionary-based result for segments
+                // When Zenzai succeeds, use its result as a single segment
+                // This ensures the UI displays Zenzai candidates properly
+                if let Some(zenzai_candidates) = zenzai_result {
+                    // Create a single segment covering the entire reading
+                    let segment = SegmentInfo {
+                        reading: reading.clone(),
+                        start: 0,
+                        length: reading.chars().count(),
+                        candidates: zenzai_candidates.clone(),
+                    };
+
+                    return Response::ConvertResult {
+                        seq,
+                        session_id,
+                        candidates: zenzai_candidates,
+                        segments: vec![segment],
+                    };
+                }
+
+                // Fallback to dictionary-based conversion
                 let dict_result = self.converter.convert_with_segments(&reading);
-
-                // Merge candidates: Zenzai first, then dictionary
-                let candidates = if let Some(mut zenzai_cands) = zenzai_candidates {
-                    // Add dictionary candidates that aren't already in Zenzai results
-                    for cand in dict_result.combined_candidates.iter() {
-                        if !zenzai_cands.contains(cand) {
-                            zenzai_cands.push(cand.clone());
-                        }
-                    }
-                    zenzai_cands
-                } else {
-                    dict_result.combined_candidates
-                };
 
                 Response::ConvertResult {
                     seq,
                     session_id,
-                    candidates,
+                    candidates: dict_result.combined_candidates,
                     segments: dict_result
                         .segments
                         .into_iter()
