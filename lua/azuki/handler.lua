@@ -142,7 +142,6 @@ local function commit_selected()
   state.data.selected_index = 0
   state.data.segments = {}
   state.data.current_segment = 1
-  state.data.preedit_start_row = state.data.preedit_start_row
   state.data.preedit_start_col = new_col
   state.data.romaji_buffer = saved_romaji
 end
@@ -201,7 +200,6 @@ function M.commit()
   state.data.selected_index = 0
   state.data.segments = {}
   state.data.current_segment = 1
-  state.data.preedit_start_row = state.data.preedit_start_row
   state.data.preedit_start_col = new_col
 end
 
