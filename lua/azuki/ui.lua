@@ -5,6 +5,18 @@ local M = {}
 
 local config = require("azuki.config")
 
+--- Clamp column to valid range for the given line
+--- @param bufnr number Buffer number
+--- @param row number Row number (0-indexed)
+--- @param col number Column number (0-indexed)
+--- @return number Clamped column value
+local function clamp_col(bufnr, row, col)
+  local lines = vim.api.nvim_buf_get_lines(bufnr, row, row + 1, false)
+  local line = lines[1] or ""
+  local max_col = #line
+  return math.min(col, max_col)
+end
+
 --- Namespace ID for extmarks
 M.ns_id = nil
 
@@ -32,6 +44,9 @@ function M.show_preedit(bufnr, row, col, text)
   -- Get highlight group from config
   local hl_group = config.get("highlight").pending
 
+  -- Clamp col to valid range
+  col = clamp_col(bufnr, row, col)
+
   -- Set extmark with inline virtual text
   M.current_mark_id = vim.api.nvim_buf_set_extmark(bufnr, M.ns_id, row, col, {
     virt_text = { { text, hl_group } },
@@ -55,6 +70,9 @@ function M.show_candidate(bufnr, row, col, candidate, is_selected)
 
   local hl = config.get("highlight")
   local hl_group = is_selected and hl.selected or hl.pending
+
+  -- Clamp col to valid range
+  col = clamp_col(bufnr, row, col)
 
   M.current_mark_id = vim.api.nvim_buf_set_extmark(bufnr, M.ns_id, row, col, {
     virt_text = { { candidate, hl_group } },
@@ -100,6 +118,9 @@ function M.show_segments(bufnr, row, col, segments, current_segment, pending_rom
   if pending_romaji and pending_romaji ~= "" then
     table.insert(virt_text, { pending_romaji, hl.pending })
   end
+
+  -- Clamp col to valid range
+  col = clamp_col(bufnr, row, col)
 
   M.current_mark_id = vim.api.nvim_buf_set_extmark(bufnr, M.ns_id, row, col, {
     virt_text = virt_text,
