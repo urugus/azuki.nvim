@@ -9,6 +9,7 @@ Neovim 向け日本語入力プラグイン。OS IME に依存せず、Vim 操�
 - ライブ変換（入力中のリアルタイム変換）
 - Vim 操作との自然な共存（`<Esc>` で即座にノーマルモードへ）
 - SKK 辞書対応
+- **Zenzai ニューラル変換**（GPT-2 ベースの高精度変換、オプション）
 - プロセス分離による安定性（変換サーバーがクラッシュしても Neovim は影響を受けない）
 
 ## 必要環境
@@ -25,7 +26,29 @@ Neovim 向け日本語入力プラグイン。OS IME に依存せず、Vim 操�
 
 ## インストール
 
-### lazy.nvim
+### lazy.nvim（Zenzai 有効）
+
+Zenzai ニューラル変換を有効にする場合（推奨）：
+
+```lua
+{
+  "urugus/azuki.nvim",
+  build = "./scripts/setup.sh",
+  config = function()
+    require("azuki").setup({
+      zenzai = { enabled = true }
+    })
+  end,
+}
+```
+
+セットアップスクリプトは以下を自動で行います：
+- Rust サーバーのビルド（Zenzai 機能付き）
+- Zenzai モデル（約 70MB）のダウンロード
+
+### lazy.nvim（辞書のみ）
+
+Zenzai を使わず、SKK 辞書のみで使用する場合：
 
 ```lua
 {
@@ -42,16 +65,25 @@ Neovim 向け日本語入力プラグイン。OS IME に依存せず、Vim 操�
 ```lua
 use {
   "urugus/azuki.nvim",
-  run = "cd server && cargo build --release",
+  run = "./scripts/setup.sh",
   config = function()
-    require("azuki").setup()
+    require("azuki").setup({
+      zenzai = { enabled = true }
+    })
   end,
 }
 ```
 
 ### 手動インストールの場合
 
-プラグインマネージャーを使わない場合は、手動でビルドしてください。
+プラグインマネージャーを使わない場合は、手動でセットアップしてください。
+
+```bash
+cd ~/.local/share/nvim/lazy/azuki.nvim
+./scripts/setup.sh
+```
+
+または、Zenzai なしでビルドする場合：
 
 ```bash
 cd ~/.local/share/nvim/lazy/azuki.nvim/server
@@ -97,6 +129,14 @@ require("azuki").setup({
   -- ライブ変換の有効/無効
   live_conversion = true,
 
+  -- Zenzai ニューラル変換設定
+  zenzai = {
+    enabled = false,                     -- ニューラル変換を有効化
+    model_path = nil,                    -- モデルパス（nil で自動検出）
+    inference_limit = 10,                -- 推論回数上限
+    contextual = false,                  -- 文脈を考慮した変換（未実装）
+  },
+
   -- ハイライトグループ
   highlight = {
     pending = "AzukiPending",           -- 未確定文字
@@ -110,3 +150,12 @@ require("azuki").setup({
   learning_file = vim.fn.stdpath("data") .. "/azuki/learning.json",
 })
 ```
+
+### Zenzai について
+
+Zenzai は GPT-2 ベースのニューラルかな漢字変換エンジンです。SKK 辞書だけでは変換できない語句も、文脈を考慮して適切に変換できます。
+
+- モデルは [Hugging Face](https://huggingface.co/Miwa-Keita/zenz-v3.1-small-gguf) から自動ダウンロードされます
+- 初回の変換時にモデルがロードされるため、少し時間がかかります
+- モデルサイズ: 約 70MB
+- 推奨メモリ: 150MB 以上

@@ -61,7 +61,7 @@ impl Server {
     /// Check if Zenzai is enabled and ready
     #[cfg(feature = "zenzai")]
     fn is_zenzai_enabled(&self) -> bool {
-        self.zenzai.as_ref().map_or(false, |z| z.is_ready())
+        self.zenzai.as_ref().is_some_and(|z| z.is_ready())
     }
 
     #[cfg(not(feature = "zenzai"))]
@@ -89,6 +89,8 @@ impl Server {
                 });
 
                 // Initialize Zenzai if requested
+                // Can't use map() here due to #[cfg] attributes inside
+                #[allow(clippy::manual_map)]
                 let zenzai_enabled = if let Some(config) = zenzai {
                     #[cfg(feature = "zenzai")]
                     {
@@ -119,12 +121,61 @@ impl Server {
                 cursor: _,
                 options: _,
             } => {
-                let result = self.converter.convert_with_segments(&reading);
+                // Try Zenzai first if enabled
+                #[cfg(feature = "zenzai")]
+                let zenzai_result = if self.is_zenzai_enabled() {
+                    if let Some(ref mut zenzai) = self.zenzai {
+                        match zenzai.convert(&reading, None) {
+                            Ok(candidates) => {
+                                eprintln!("[handler] Zenzai conversion successful");
+                                Some(candidates)
+                            }
+                            Err(e) => {
+                                eprintln!("[handler] Zenzai conversion failed: {}, falling back to dictionary", e);
+                                None
+                            }
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                #[cfg(not(feature = "zenzai"))]
+                let zenzai_result: Option<Vec<String>> = None;
+
+                // When Zenzai succeeds, use its result as a single segment
+                // This ensures the UI displays Zenzai candidates properly
+                if let Some(zenzai_candidates) = zenzai_result {
+                    // Create a single segment covering the entire reading
+                    let segment = SegmentInfo {
+                        reading: reading.clone(),
+                        start: 0,
+                        length: reading.chars().count(),
+                        candidates: zenzai_candidates.clone(),
+                    };
+
+                    return Response::ConvertResult {
+                        seq,
+                        session_id,
+                        candidates: zenzai_candidates,
+                        segments: vec![segment],
+                    };
+                }
+
+                // Fallback to dictionary-based conversion
+                let dict_result = self.converter.convert_with_segments(&reading);
+
                 Response::ConvertResult {
                     seq,
                     session_id,
-                    candidates: result.combined_candidates,
-                    segments: result.segments.into_iter().map(SegmentInfo::from).collect(),
+                    candidates: dict_result.combined_candidates,
+                    segments: dict_result
+                        .segments
+                        .into_iter()
+                        .map(SegmentInfo::from)
+                        .collect(),
                 }
             }
             Request::Commit {
