@@ -123,3 +123,32 @@ pub fn extract_seq(json: &str) -> Option<u64> {
     let value: serde_json::Value = serde_json::from_str(json).ok()?;
     value.get("seq")?.as_u64()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_seq_valid_json() {
+        let json = r#"{"type":"init","seq":42}"#;
+        assert_eq!(extract_seq(json), Some(42));
+    }
+
+    #[test]
+    fn test_extract_seq_missing_seq() {
+        let json = r#"{"type":"init"}"#;
+        assert_eq!(extract_seq(json), None);
+    }
+
+    #[test]
+    fn test_extract_seq_invalid_json() {
+        let json = "not valid json";
+        assert_eq!(extract_seq(json), None);
+    }
+
+    #[test]
+    fn test_extract_seq_seq_not_number() {
+        let json = r#"{"seq":"not a number"}"#;
+        assert_eq!(extract_seq(json), None);
+    }
+}

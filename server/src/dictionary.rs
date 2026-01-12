@@ -249,4 +249,29 @@ mod tests {
         assert_eq!(decoded, "きょう /今日/");
         assert_eq!(encoding, "EUC-JP");
     }
+
+    #[test]
+    fn test_lookup_with_fallback_found() {
+        let dict = Dictionary::load(test_dict_path()).unwrap();
+        // Entry exists: should return candidates with reading as fallback
+        let result = dict.lookup_with_fallback("きょう");
+        assert!(result.contains(&"今日".to_string()));
+        assert!(result.contains(&"きょう".to_string())); // fallback included
+    }
+
+    #[test]
+    fn test_lookup_with_fallback_not_found() {
+        let dict = Dictionary::load(test_dict_path()).unwrap();
+        // Entry does not exist: should return reading only
+        let result = dict.lookup_with_fallback("そんざいしない");
+        assert_eq!(result, vec!["そんざいしない"]);
+    }
+
+    #[test]
+    fn test_lookup_with_fallback_empty_string() {
+        let dict = Dictionary::load(test_dict_path()).unwrap();
+        // Empty string: should return empty string only
+        let result = dict.lookup_with_fallback("");
+        assert_eq!(result, vec![""]);
+    }
 }
