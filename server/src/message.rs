@@ -1,6 +1,7 @@
 //! Request and Response message types for the azuki protocol
 
 use crate::converter::Segment;
+use crate::zenzai::ZenzaiConfig;
 use serde::{Deserialize, Serialize};
 
 /// Request types from the client
@@ -13,6 +14,8 @@ pub enum Request {
         seq: u64,
         #[serde(default)]
         session_id: Option<String>,
+        #[serde(default)]
+        zenzai: Option<ZenzaiConfig>,
     },
     Convert {
         seq: u64,
@@ -90,6 +93,8 @@ pub enum Response {
         session_id: String,
         version: String,
         has_dictionary: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        zenzai_enabled: Option<bool>,
     },
     ConvertResult {
         seq: u64,

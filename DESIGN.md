@@ -250,7 +250,7 @@ azuki.nvim/
 - [ ] 文節区切りの調整
 
 ### Phase 4: 実用化
-- [ ] Zenzai統合（ニューラル変換）
+- [x] Zenzai統合（ニューラル変換）- 基盤実装完了
 - [ ] 学習機能
 - [ ] 設定のカスタマイズ
 - [ ] パフォーマンス最適化
@@ -266,18 +266,24 @@ require('azuki').setup({
 
   -- 入力設定
   toggle_key = '<C-j>',
-  
+
   -- 変換設定
   live_conversion = true,  -- ライブ変換ON/OFF
-  backend = 'auto',        -- 変換バックエンド（将来）
-  zenzai = false,          -- ニューラル変換（要追加セットアップ）
-  
+
+  -- Zenzai ニューラル変換設定
+  zenzai = {
+    enabled = false,       -- ニューラル変換を有効化
+    model_path = nil,      -- GGUFモデルのパス（nilで自動検出）
+    inference_limit = 10,  -- 推論回数上限（大きいほど精度向上、速度低下）
+    contextual = false,    -- 文脈を考慮した変換
+  },
+
   -- 表示設定
   highlight = {
     pending = 'AzukiPending',    -- 未確定文字
     selected = 'AzukiSelected',  -- 選択中候補
   },
-  
+
   -- 学習設定
   learning = true,
   learning_file = vim.fn.stdpath('data') .. '/azuki/learning.json',

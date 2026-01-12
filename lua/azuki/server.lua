@@ -240,10 +240,28 @@ function M.start(opts, callback)
     end
   end)
 
-  -- Send init message
-  M.send({ type = "init" }, function(response)
+  -- Send init message with zenzai config if enabled
+  local init_msg = { type = "init" }
+
+  -- Include zenzai configuration if available
+  local azuki_config = require("azuki.config")
+  local zenzai_config = azuki_config.get("zenzai")
+  -- Support both boolean (legacy) and table configs
+  if type(zenzai_config) == "boolean" then
+    if zenzai_config then
+      init_msg.zenzai = { enabled = true }
+    end
+  elseif type(zenzai_config) == "table" and zenzai_config.enabled then
+    init_msg.zenzai = zenzai_config
+  end
+
+  M.send(init_msg, function(response)
     if response.type == "init_result" then
-      vim.notify("[azuki] Server initialized (v" .. response.version .. ")", vim.log.levels.INFO)
+      local info_parts = { "[azuki] Server initialized (v" .. response.version .. ")" }
+      if response.zenzai_enabled then
+        table.insert(info_parts, " with Zenzai")
+      end
+      vim.notify(table.concat(info_parts), vim.log.levels.INFO)
       if callback then
         callback(true)
       end
