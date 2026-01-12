@@ -15,9 +15,12 @@ Neovim 向け日本語入力プラグイン。OS IME に依存せず、Vim 操�
 
 - Neovim >= 0.9.0
 - SKK 辞書（以下のパスを自動検索）
-  - `~/.local/share/skk/SKK-JISYO.L`
-  - `~/.skk/SKK-JISYO.L`
+  - `$XDG_DATA_HOME/azuki/dict/SKK-JISYO.L`
+  - `~/.local/share/azuki/dict/SKK-JISYO.L`
+  - `~/.azuki/dict/SKK-JISYO.L`
   - `/usr/share/skk/SKK-JISYO.L`
+  - `/usr/local/share/skk/SKK-JISYO.L`
+  - または環境変数 `AZUKI_DICTIONARY` で指定
 - サーバービルド時: Rust toolchain
 
 ## インストール
