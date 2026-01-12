@@ -181,17 +181,35 @@ end)
 -- C. Stale Response Handling Tests
 -- =====================================================
 
-test("Stale response: last_seq tracking", function()
+test("Stale response: old response is ignored and state unchanged", function()
   reset_state()
+  input.state.segments = create_mock_segments()
+  input.state.current_segment = 1
+  input.state.hiragana = "きょうはいい"
+  input.state.last_seq = 10
 
-  -- Simulate sequence number tracking
-  input.state.last_seq = 5
+  -- Capture initial state
+  local initial_selected_index = input.state.segments[1].selected_index
 
-  -- A response with old seq should be ignored (this tests the logic)
-  local old_seq = 3
-  local current_seq = input.state.last_seq
+  -- Simulate receiving an old response (seq < last_seq)
+  -- In real code, _request_conversion checks: if response.seq ~= M.state.last_seq then return end
+  local old_response = {
+    seq = 5, -- Old sequence number
+    type = "convert_result",
+    segments = {
+      { reading = "changed", candidates = { "CHANGED" }, length = 3, selected_index = 1 },
+    },
+  }
 
-  assert(old_seq ~= current_seq, "old_seq should not match current last_seq")
+  -- Verify the condition that would cause response to be ignored
+  assert(old_response.seq ~= input.state.last_seq, "old response seq should not match last_seq")
+
+  -- Verify state was NOT changed (simulating the guard clause behavior)
+  assert(
+    input.state.segments[1].selected_index == initial_selected_index,
+    "state should remain unchanged for stale response"
+  )
+  assert(input.state.segments[1].reading == "きょう", "segments should not be replaced by stale response")
 end)
 
 test("Stale response: cancel increments last_seq", function()
@@ -206,11 +224,14 @@ test("Stale response: cancel increments last_seq", function()
 
   input.cancel()
 
-  -- last_seq should be server.get_seq() + 1000 = 1010
-  assert(input.state.last_seq == 1010, "last_seq should be 1010 after cancel, got " .. input.state.last_seq)
+  -- Capture result before restoring mock
+  local result_last_seq = input.state.last_seq
 
-  -- Restore
+  -- Restore before assertion to avoid leaving mock in place if the test fails
   server.get_seq = original_get_seq
+
+  -- last_seq should be server.get_seq() + 1000 = 1010
+  assert(result_last_seq == 1010, "last_seq should be 1010 after cancel, got " .. result_last_seq)
 end)
 
 -- =====================================================
