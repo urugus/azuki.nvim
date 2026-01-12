@@ -1,7 +1,8 @@
 -- Segment function test script
 -- Run with: nvim --headless -c "set rtp+=." -c "luafile tests/segment_spec.lua"
 
-local input = require("azuki.input")
+local state = require("azuki.state")
+local handler = require("azuki.handler")
 local ui = require("azuki.ui")
 local server = require("azuki.server")
 
@@ -21,15 +22,7 @@ end
 
 -- Helper: Reset input state
 local function reset_state()
-  input.state.enabled = false
-  input.state.romaji_buffer = ""
-  input.state.hiragana = ""
-  input.state.candidates = {}
-  input.state.selected_index = 0
-  input.state.segments = {}
-  input.state.current_segment = 1
-  input.state.bufnr = nil
-  input.state.last_seq = 0
+  state.reset()
 end
 
 -- Helper: Create mock segments
@@ -67,60 +60,60 @@ ui.setup()
 
 test("Segment selection: initial state is segment 1", function()
   reset_state()
-  input.state.segments = create_mock_segments()
-  input.state.current_segment = 1
+  state.data.segments = create_mock_segments()
+  state.data.current_segment = 1
 
-  assert(input.state.current_segment == 1, "current_segment should be 1")
+  assert(state.data.current_segment == 1, "current_segment should be 1")
 end)
 
 test("Segment selection: Tab moves to next segment", function()
   reset_state()
-  input.state.segments = create_mock_segments()
-  input.state.current_segment = 1
+  state.data.segments = create_mock_segments()
+  state.data.current_segment = 1
 
-  input.next_segment()
+  handler.next_segment()
 
-  assert(input.state.current_segment == 2, "current_segment should be 2 after Tab")
+  assert(state.data.current_segment == 2, "current_segment should be 2 after Tab")
 end)
 
 test("Segment selection: Tab at last segment stays at last", function()
   reset_state()
-  input.state.segments = create_mock_segments()
-  input.state.current_segment = 3 -- Last segment
+  state.data.segments = create_mock_segments()
+  state.data.current_segment = 3 -- Last segment
 
-  input.next_segment()
+  handler.next_segment()
 
-  assert(input.state.current_segment == 3, "current_segment should stay at 3")
+  assert(state.data.current_segment == 3, "current_segment should stay at 3")
 end)
 
 test("Segment selection: Shift-Tab moves to previous segment", function()
   reset_state()
-  input.state.segments = create_mock_segments()
-  input.state.current_segment = 2
+  state.data.segments = create_mock_segments()
+  state.data.current_segment = 2
 
-  input.prev_segment()
+  handler.prev_segment()
 
-  assert(input.state.current_segment == 1, "current_segment should be 1 after Shift-Tab")
+  assert(state.data.current_segment == 1, "current_segment should be 1 after Shift-Tab")
 end)
 
 test("Segment selection: Shift-Tab at first segment stays at first", function()
   reset_state()
-  input.state.segments = create_mock_segments()
-  input.state.current_segment = 1
+  state.data.segments = create_mock_segments()
+  state.data.current_segment = 1
 
-  input.prev_segment()
+  handler.prev_segment()
 
-  assert(input.state.current_segment == 1, "current_segment should stay at 1")
+  assert(state.data.current_segment == 1, "current_segment should stay at 1")
 end)
 
 test("Segment selection: Tab with no segments does nothing", function()
   reset_state()
-  input.state.segments = {}
-  input.state.current_segment = 1
+  state.data.segments = {}
+  state.data.current_segment = 1
 
-  input.next_segment()
+  handler.next_segment()
 
-  assert(input.state.current_segment == 1, "current_segment should stay at 1 with no segments")
+  assert(state.data.current_segment == 1, "current_segment should stay at 1 with no segments")
 end)
 
 -- =====================================================
@@ -129,52 +122,52 @@ end)
 
 test("Candidate selection: Space cycles to next candidate in segment", function()
   reset_state()
-  input.state.segments = create_mock_segments()
-  input.state.current_segment = 1
-  input.state.hiragana = "きょうはいい"
+  state.data.segments = create_mock_segments()
+  state.data.current_segment = 1
+  state.data.hiragana = "きょうはいい"
 
   -- Initial selected_index is 1
-  assert(input.state.segments[1].selected_index == 1)
+  assert(state.data.segments[1].selected_index == 1)
 
-  input.next_candidate()
+  handler.next_candidate()
 
-  assert(input.state.segments[1].selected_index == 2, "selected_index should be 2 after Space")
+  assert(state.data.segments[1].selected_index == 2, "selected_index should be 2 after Space")
 end)
 
 test("Candidate selection: Space wraps around at end", function()
   reset_state()
-  input.state.segments = create_mock_segments()
-  input.state.current_segment = 1
-  input.state.hiragana = "きょうはいい"
-  input.state.segments[1].selected_index = 3 -- Last candidate
+  state.data.segments = create_mock_segments()
+  state.data.current_segment = 1
+  state.data.hiragana = "きょうはいい"
+  state.data.segments[1].selected_index = 3 -- Last candidate
 
-  input.next_candidate()
+  handler.next_candidate()
 
-  assert(input.state.segments[1].selected_index == 1, "selected_index should wrap to 1")
+  assert(state.data.segments[1].selected_index == 1, "selected_index should wrap to 1")
 end)
 
 test("Candidate selection: Shift-Space cycles to previous candidate", function()
   reset_state()
-  input.state.segments = create_mock_segments()
-  input.state.current_segment = 1
-  input.state.hiragana = "きょうはいい"
-  input.state.segments[1].selected_index = 2
+  state.data.segments = create_mock_segments()
+  state.data.current_segment = 1
+  state.data.hiragana = "きょうはいい"
+  state.data.segments[1].selected_index = 2
 
-  input.prev_candidate()
+  handler.prev_candidate()
 
-  assert(input.state.segments[1].selected_index == 1, "selected_index should be 1 after Shift-Space")
+  assert(state.data.segments[1].selected_index == 1, "selected_index should be 1 after Shift-Space")
 end)
 
 test("Candidate selection: Shift-Space wraps around at start", function()
   reset_state()
-  input.state.segments = create_mock_segments()
-  input.state.current_segment = 1
-  input.state.hiragana = "きょうはいい"
-  input.state.segments[1].selected_index = 1
+  state.data.segments = create_mock_segments()
+  state.data.current_segment = 1
+  state.data.hiragana = "きょうはいい"
+  state.data.segments[1].selected_index = 1
 
-  input.prev_candidate()
+  handler.prev_candidate()
 
-  assert(input.state.segments[1].selected_index == 3, "selected_index should wrap to 3")
+  assert(state.data.segments[1].selected_index == 3, "selected_index should wrap to 3")
 end)
 
 -- =====================================================
@@ -183,16 +176,16 @@ end)
 
 test("Stale response: old response is ignored and state unchanged", function()
   reset_state()
-  input.state.segments = create_mock_segments()
-  input.state.current_segment = 1
-  input.state.hiragana = "きょうはいい"
-  input.state.last_seq = 10
+  state.data.segments = create_mock_segments()
+  state.data.current_segment = 1
+  state.data.hiragana = "きょうはいい"
+  state.data.last_seq = 10
 
   -- Capture initial state
-  local initial_selected_index = input.state.segments[1].selected_index
+  local initial_selected_index = state.data.segments[1].selected_index
 
   -- Simulate receiving an old response (seq < last_seq)
-  -- In real code, _request_conversion checks: if response.seq ~= M.state.last_seq then return end
+  -- In real code, handler checks: if response.seq ~= state.data.last_seq then return end
   local old_response = {
     seq = 5, -- Old sequence number
     type = "convert_result",
@@ -202,19 +195,19 @@ test("Stale response: old response is ignored and state unchanged", function()
   }
 
   -- Verify the condition that would cause response to be ignored
-  assert(old_response.seq ~= input.state.last_seq, "old response seq should not match last_seq")
+  assert(old_response.seq ~= state.data.last_seq, "old response seq should not match last_seq")
 
   -- Verify state was NOT changed (simulating the guard clause behavior)
   assert(
-    input.state.segments[1].selected_index == initial_selected_index,
+    state.data.segments[1].selected_index == initial_selected_index,
     "state should remain unchanged for stale response"
   )
-  assert(input.state.segments[1].reading == "きょう", "segments should not be replaced by stale response")
+  assert(state.data.segments[1].reading == "きょう", "segments should not be replaced by stale response")
 end)
 
 test("Stale response: cancel increments last_seq", function()
   reset_state()
-  input.state.last_seq = 5
+  state.data.last_seq = 5
 
   -- Mock server.get_seq
   local original_get_seq = server.get_seq
@@ -222,10 +215,10 @@ test("Stale response: cancel increments last_seq", function()
     return 10
   end
 
-  input.cancel()
+  handler.cancel()
 
   -- Capture result before restoring mock
-  local result_last_seq = input.state.last_seq
+  local result_last_seq = state.data.last_seq
 
   -- Restore before assertion to avoid leaving mock in place if the test fails
   server.get_seq = original_get_seq
@@ -305,48 +298,48 @@ end)
 
 test("Segment boundary: shrink_segment returns early with no segments", function()
   reset_state()
-  input.state.segments = {}
+  state.data.segments = {}
 
   -- Should not error
-  input.shrink_segment()
+  handler.shrink_segment()
 
   assert(true, "shrink_segment should not error with no segments")
 end)
 
 test("Segment boundary: shrink_segment returns early with length 1", function()
   reset_state()
-  input.state.segments = {
+  state.data.segments = {
     { reading = "あ", candidates = { "亜" }, length = 1, selected_index = 1 },
   }
-  input.state.current_segment = 1
+  state.data.current_segment = 1
 
   -- Should not error (cannot shrink further)
-  input.shrink_segment()
+  handler.shrink_segment()
 
   assert(true, "shrink_segment should not error with length 1 segment")
 end)
 
 test("Segment boundary: extend_segment returns early at last segment", function()
   reset_state()
-  input.state.segments = create_mock_segments()
-  input.state.current_segment = 3 -- Last segment
+  state.data.segments = create_mock_segments()
+  state.data.current_segment = 3 -- Last segment
 
   -- Should not error (cannot extend last segment)
-  input.extend_segment()
+  handler.extend_segment()
 
   assert(true, "extend_segment should not error at last segment")
 end)
 
 test("Segment boundary: extend_segment returns early when next has length 1", function()
   reset_state()
-  input.state.segments = {
+  state.data.segments = {
     { reading = "あい", candidates = { "愛" }, length = 2, selected_index = 1 },
     { reading = "う", candidates = { "鵜" }, length = 1, selected_index = 1 },
   }
-  input.state.current_segment = 1
+  state.data.current_segment = 1
 
   -- Should not error (next segment has only 1 char)
-  input.extend_segment()
+  handler.extend_segment()
 
   assert(true, "extend_segment should not error when next segment has length 1")
 end)
