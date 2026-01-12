@@ -3,10 +3,18 @@
 use crate::config::load_dictionary;
 use crate::converter::{AdjustDirection, Converter, Segment};
 use crate::message::{Request, Response, SegmentInfo};
+#[cfg(feature = "zenzai")]
+use crate::zenzai::ZenzaiBackend;
+use crate::zenzai::ZenzaiConfig;
 
 /// Server state
 pub struct Server {
     converter: Converter,
+    #[cfg(feature = "zenzai")]
+    zenzai: Option<ZenzaiBackend>,
+    #[cfg(not(feature = "zenzai"))]
+    #[allow(dead_code)]
+    zenzai_config: Option<ZenzaiConfig>,
 }
 
 impl Server {
@@ -14,13 +22,62 @@ impl Server {
     pub fn new() -> Self {
         let dictionary = load_dictionary();
         let converter = Converter::new(dictionary);
-        Self { converter }
+        Self {
+            converter,
+            #[cfg(feature = "zenzai")]
+            zenzai: None,
+            #[cfg(not(feature = "zenzai"))]
+            zenzai_config: None,
+        }
+    }
+
+    /// Initialize Zenzai backend if configured
+    #[cfg(feature = "zenzai")]
+    fn init_zenzai(&mut self, config: ZenzaiConfig) -> bool {
+        if !config.enabled {
+            eprintln!("[zenzai] Disabled by configuration");
+            return false;
+        }
+
+        if !config.is_usable() {
+            eprintln!("[zenzai] Model not found, falling back to dictionary-based conversion");
+            return false;
+        }
+
+        let mut backend = ZenzaiBackend::new(config);
+        match backend.initialize() {
+            Ok(()) => {
+                self.zenzai = Some(backend);
+                eprintln!("[zenzai] Initialized successfully");
+                true
+            }
+            Err(e) => {
+                eprintln!("[zenzai] Initialization failed: {}", e);
+                false
+            }
+        }
+    }
+
+    /// Check if Zenzai is enabled and ready
+    #[cfg(feature = "zenzai")]
+    fn is_zenzai_enabled(&self) -> bool {
+        self.zenzai.as_ref().map_or(false, |z| z.is_ready())
+    }
+
+    #[cfg(not(feature = "zenzai"))]
+    #[allow(dead_code)]
+    fn is_zenzai_enabled(&self) -> bool {
+        false
     }
 
     /// Handle a request and return a response
-    pub fn handle_request(&self, request: Request) -> Response {
+    pub fn handle_request(&mut self, request: Request) -> Response {
         match request {
-            Request::Init { seq, session_id } => {
+            Request::Init {
+                seq,
+                session_id,
+                zenzai,
+            } => {
                 let session_id = session_id.unwrap_or_else(|| {
                     format!(
                         "session_{}",
@@ -30,11 +87,29 @@ impl Server {
                             .as_millis()
                     )
                 });
+
+                // Initialize Zenzai if requested
+                let zenzai_enabled = if let Some(config) = zenzai {
+                    #[cfg(feature = "zenzai")]
+                    {
+                        Some(self.init_zenzai(config))
+                    }
+                    #[cfg(not(feature = "zenzai"))]
+                    {
+                        self.zenzai_config = Some(config);
+                        eprintln!("[zenzai] Feature not enabled at compile time");
+                        Some(false)
+                    }
+                } else {
+                    None
+                };
+
                 Response::InitResult {
                     seq,
                     session_id,
                     version: env!("CARGO_PKG_VERSION").to_string(),
                     has_dictionary: self.converter.has_dictionary(),
+                    zenzai_enabled,
                 }
             }
             Request::Convert {
@@ -123,11 +198,19 @@ impl Default for Server {
 mod tests {
     use super::*;
 
+    fn create_test_server() -> Server {
+        Server {
+            converter: Converter::new(None),
+            #[cfg(feature = "zenzai")]
+            zenzai: None,
+            #[cfg(not(feature = "zenzai"))]
+            zenzai_config: None,
+        }
+    }
+
     #[test]
     fn test_init_request() {
-        let server = Server {
-            converter: Converter::new(None),
-        };
+        let mut server = create_test_server();
         let json = r#"{"type":"init","seq":1}"#;
         let request: Request = serde_json::from_str(json).unwrap();
         let response = server.handle_request(request);
@@ -148,9 +231,7 @@ mod tests {
 
     #[test]
     fn test_convert_request() {
-        let server = Server {
-            converter: Converter::new(None),
-        };
+        let mut server = create_test_server();
         let json = r#"{"type":"convert","seq":42,"session_id":"abc","reading":"きょうは"}"#;
         let request: Request = serde_json::from_str(json).unwrap();
         let response = server.handle_request(request);
@@ -173,9 +254,7 @@ mod tests {
 
     #[test]
     fn test_shutdown_request() {
-        let server = Server {
-            converter: Converter::new(None),
-        };
+        let mut server = create_test_server();
         let json = r#"{"type":"shutdown","seq":99}"#;
         let request: Request = serde_json::from_str(json).unwrap();
         let response = server.handle_request(request);
@@ -184,6 +263,26 @@ mod tests {
                 assert_eq!(seq, 99);
             }
             _ => panic!("Expected ShutdownResult"),
+        }
+    }
+
+    #[test]
+    fn test_init_with_zenzai_config() {
+        let mut server = create_test_server();
+        let json = r#"{"type":"init","seq":1,"zenzai":{"enabled":true}}"#;
+        let request: Request = serde_json::from_str(json).unwrap();
+        let response = server.handle_request(request);
+        match response {
+            Response::InitResult {
+                seq,
+                zenzai_enabled,
+                ..
+            } => {
+                assert_eq!(seq, 1);
+                // Without model file, zenzai should not be enabled
+                assert_eq!(zenzai_enabled, Some(false));
+            }
+            _ => panic!("Expected InitResult"),
         }
     }
 }

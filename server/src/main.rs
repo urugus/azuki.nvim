@@ -8,6 +8,7 @@ mod dictionary;
 mod handler;
 mod message;
 mod protocol;
+mod zenzai;
 
 use handler::Server;
 use message::{extract_seq, Request, Response};
@@ -22,7 +23,7 @@ fn main() -> io::Result<()> {
 
     eprintln!("azuki-server v{} started", env!("CARGO_PKG_VERSION"));
 
-    let server = Server::new();
+    let mut server = Server::new();
 
     loop {
         let msg = match read_message(&mut reader)? {

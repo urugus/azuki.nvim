@@ -17,6 +17,13 @@ M.defaults = {
   },
   learning = true,
   learning_file = vim.fn.stdpath("data") .. "/azuki/learning.json",
+  -- Zenzai neural conversion settings
+  zenzai = {
+    enabled = false, -- Enable Zenzai neural conversion
+    model_path = nil, -- Path to zenz GGUF model (auto-detect if nil)
+    inference_limit = 10, -- Max inference iterations (higher = better accuracy, slower)
+    contextual = false, -- Enable context-aware conversion
+  },
 }
 
 --- Current configuration values
