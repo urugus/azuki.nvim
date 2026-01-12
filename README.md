@@ -49,20 +49,13 @@ use {
 }
 ```
 
-### サーバーのビルド
+### 手動インストールの場合
 
-プラグインインストール後、サーバーをビルドします。
+プラグインマネージャーを使わない場合は、手動でビルドしてください。
 
 ```bash
 cd ~/.local/share/nvim/lazy/azuki.nvim/server
 cargo build --release
-```
-
-ビルド済みバイナリを配置する場合:
-
-```bash
-mkdir -p ~/.local/share/nvim/azuki/bin
-cp target/release/azuki-server ~/.local/share/nvim/azuki/bin/
 ```
 
 ## 使い方
