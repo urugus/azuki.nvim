@@ -58,15 +58,13 @@ jobs:
       - name: Build azuki-server
         run: cargo build --manifest-path server/Cargo.toml
 
-      # Install Neovim
+      # Install Neovim (pre-built binary)
       - name: Install Neovim
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ninja-build gettext cmake unzip curl
-          git clone --depth 1 --branch stable https://github.com/neovim/neovim.git /tmp/neovim
-          cd /tmp/neovim
-          make CMAKE_BUILD_TYPE=Release
-          sudo make install
+          curl -LO https://github.com/neovim/neovim/releases/download/stable/nvim-linux-x86_64.tar.gz
+          tar xzf nvim-linux-x86_64.tar.gz
+          sudo mv nvim-linux-x86_64 /opt/nvim
+          echo "/opt/nvim/bin" >> $GITHUB_PATH
 
       # Run tests
       - name: Run Lua tests
