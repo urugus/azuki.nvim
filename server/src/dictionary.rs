@@ -89,6 +89,23 @@ impl Dictionary {
         self.okuri_nasi.get(reading)
     }
 
+    /// Look up candidates with fallback to the reading itself
+    ///
+    /// Returns candidates from dictionary if found, otherwise returns the reading.
+    /// Always includes the reading as the last candidate if not already present.
+    pub fn lookup_with_fallback(&self, reading: &str) -> Vec<String> {
+        match self.okuri_nasi.get(reading) {
+            Some(candidates) => {
+                let mut result = candidates.clone();
+                if !result.contains(&reading.to_string()) {
+                    result.push(reading.to_string());
+                }
+                result
+            }
+            None => vec![reading.to_string()],
+        }
+    }
+
     /// Check if dictionary is empty
     #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
@@ -231,5 +248,30 @@ mod tests {
         let (decoded, encoding) = decode_content(&eucjp_bytes);
         assert_eq!(decoded, "きょう /今日/");
         assert_eq!(encoding, "EUC-JP");
+    }
+
+    #[test]
+    fn test_lookup_with_fallback_found() {
+        let dict = Dictionary::load(test_dict_path()).unwrap();
+        // Entry exists: should return candidates with reading as fallback
+        let result = dict.lookup_with_fallback("きょう");
+        assert!(result.contains(&"今日".to_string()));
+        assert!(result.contains(&"きょう".to_string())); // fallback included
+    }
+
+    #[test]
+    fn test_lookup_with_fallback_not_found() {
+        let dict = Dictionary::load(test_dict_path()).unwrap();
+        // Entry does not exist: should return reading only
+        let result = dict.lookup_with_fallback("そんざいしない");
+        assert_eq!(result, vec!["そんざいしない"]);
+    }
+
+    #[test]
+    fn test_lookup_with_fallback_empty_string() {
+        let dict = Dictionary::load(test_dict_path()).unwrap();
+        // Empty string: should return empty string only
+        let result = dict.lookup_with_fallback("");
+        assert_eq!(result, vec![""]);
     }
 }

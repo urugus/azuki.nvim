@@ -45,97 +45,6 @@ impl Converter {
         Self { dictionary }
     }
 
-    /// Convert hiragana reading to kanji candidates
-    ///
-    /// Uses longest-match algorithm to find candidates.
-    /// Returns candidates for the entire reading, plus the reading itself as fallback.
-    #[allow(dead_code)]
-    pub fn convert(&self, reading: &str) -> Vec<String> {
-        if reading.is_empty() {
-            return vec![];
-        }
-
-        let dict = match &self.dictionary {
-            Some(d) => d,
-            None => {
-                // No dictionary, return reading as-is
-                return vec![reading.to_string()];
-            }
-        };
-
-        let reading_str = reading.to_string();
-
-        // Try exact match first
-        if let Some(candidates) = dict.lookup(reading) {
-            let mut result = candidates.clone();
-            // Add original reading as last fallback, if not already present
-            if !result.iter().any(|c| c == &reading_str) {
-                result.push(reading_str);
-            }
-            return result;
-        }
-
-        // Try segmented conversion using longest-match
-        let segments = self.segment(reading);
-        if segments.len() > 1 {
-            // Combine first candidates from each segment
-            let combined: String = segments
-                .iter()
-                .map(|candidates| candidates.first().unwrap().as_str())
-                .collect();
-
-            let mut result = vec![combined];
-            // Add original reading as fallback
-            result.push(reading.to_string());
-            return result;
-        }
-
-        // No conversion found, return reading as-is
-        vec![reading.to_string()]
-    }
-
-    /// Segment reading into convertible parts using longest-match
-    #[allow(dead_code)]
-    fn segment(&self, reading: &str) -> Vec<Vec<String>> {
-        let dict = match &self.dictionary {
-            Some(d) => d,
-            None => return vec![vec![reading.to_string()]],
-        };
-
-        let chars: Vec<char> = reading.chars().collect();
-        let mut result = Vec::new();
-        let mut pos = 0;
-
-        while pos < chars.len() {
-            let mut best_match: Option<(usize, &Vec<String>)> = None;
-
-            // Try longest match first
-            for end in (pos + 1..=chars.len()).rev() {
-                let substr: String = chars[pos..end].iter().collect();
-                if let Some(candidates) = dict.lookup(&substr) {
-                    best_match = Some((end - pos, candidates));
-                    break;
-                }
-            }
-
-            match best_match {
-                Some((len, candidates)) => {
-                    // Clone only when adding to result
-                    result.push(candidates.clone());
-                    pos += len;
-                }
-                None => {
-                    // No match, take single character
-                    let ch: String = chars[pos..pos + 1].iter().collect();
-                    result.push(vec![ch]);
-                    pos += 1;
-                }
-            }
-        }
-
-        result
-    }
-
     /// Segment reading into convertible parts with position information
     pub fn segment_with_info(&self, reading: &str) -> Vec<Segment> {
         let dict = match &self.dictionary {
@@ -156,25 +65,20 @@ impl Converter {
         let mut pos = 0;
 
         while pos < chars.len() {
-            let mut best_match: Option<(usize, Vec<String>)> = None;
+            let mut best_match: Option<(usize, String)> = None;
 
             // Try longest match first
             for end in (pos + 1..=chars.len()).rev() {
                 let substr: String = chars[pos..end].iter().collect();
-                if let Some(candidates) = dict.lookup(&substr) {
-                    let mut cands = candidates.clone();
-                    // Add reading as fallback if not present
-                    if !cands.contains(&substr) {
-                        cands.push(substr.clone());
-                    }
-                    best_match = Some((end - pos, cands));
+                if dict.lookup(&substr).is_some() {
+                    best_match = Some((end - pos, substr));
                     break;
                 }
             }
 
             match best_match {
-                Some((len, candidates)) => {
-                    let seg_reading: String = chars[pos..pos + len].iter().collect();
+                Some((len, seg_reading)) => {
+                    let candidates = dict.lookup_with_fallback(&seg_reading);
                     segments.push(Segment {
                         reading: seg_reading,
                         start: pos,
@@ -229,6 +133,19 @@ impl Converter {
         }
     }
 
+    /// Check if segment adjustment is possible
+    fn can_adjust(&self, segments: &[Segment], index: usize, direction: AdjustDirection) -> bool {
+        // Cannot adjust last segment (no next segment to exchange with)
+        if index >= segments.len() - 1 {
+            return false;
+        }
+
+        match direction {
+            AdjustDirection::Shrink => segments[index].length > 1,
+            AdjustDirection::Extend => segments[index + 1].length > 1,
+        }
+    }
+
     /// Adjust segment boundary
     ///
     /// Returns new segments after adjusting the boundary of the specified segment.
@@ -248,28 +165,17 @@ impl Converter {
             return current_segments.to_vec();
         }
 
+        // Check if adjustment is possible
+        if !self.can_adjust(current_segments, segment_index, direction) {
+            return current_segments.to_vec();
+        }
+
         // Calculate new boundaries based on direction
         let new_boundaries = match direction {
             AdjustDirection::Shrink => {
-                // Cannot shrink if this is the last segment (no next segment to receive char)
-                if segment_index >= current_segments.len() - 1 {
-                    return current_segments.to_vec();
-                }
-                // Cannot shrink if segment is 1 character
-                if current_segments[segment_index].length <= 1 {
-                    return current_segments.to_vec();
-                }
                 self.calculate_shrink_boundaries(current_segments, segment_index)
             }
             AdjustDirection::Extend => {
-                // Cannot extend if this is the last segment
-                if segment_index >= current_segments.len() - 1 {
-                    return current_segments.to_vec();
-                }
-                // Cannot extend if next segment is only 1 character
-                if current_segments[segment_index + 1].length <= 1 {
-                    return current_segments.to_vec();
-                }
                 self.calculate_extend_boundaries(current_segments, segment_index)
             }
         };
@@ -327,7 +233,6 @@ impl Converter {
         chars: &[char],
         boundaries: &[usize],
     ) -> Vec<Segment> {
-        let dict = &self.dictionary;
         let mut segments = Vec::new();
         let mut start = 0;
 
@@ -337,18 +242,9 @@ impl Converter {
             }
 
             let seg_reading: String = chars[start..end].iter().collect();
-            let candidates = if let Some(d) = dict {
-                if let Some(cands) = d.lookup(&seg_reading) {
-                    let mut c = cands.clone();
-                    if !c.contains(&seg_reading) {
-                        c.push(seg_reading.clone());
-                    }
-                    c
-                } else {
-                    vec![seg_reading.clone()]
-                }
-            } else {
-                vec![seg_reading.clone()]
+            let candidates = match &self.dictionary {
+                Some(dict) => dict.lookup_with_fallback(&seg_reading),
+                None => vec![seg_reading.clone()],
             };
 
             segments.push(Segment {
@@ -392,15 +288,15 @@ mod tests {
     #[test]
     fn test_convert_no_dictionary() {
         let converter = Converter::new(None);
-        let result = converter.convert("きょう");
-        assert_eq!(result, vec!["きょう"]);
+        let result = converter.convert_with_segments("きょう");
+        assert_eq!(result.combined_candidates, vec!["きょう"]);
     }
 
     #[test]
     fn test_convert_empty() {
         let converter = Converter::new(None);
-        let result = converter.convert("");
-        assert!(result.is_empty());
+        let result = converter.convert_with_segments("");
+        assert!(result.combined_candidates.is_empty());
     }
 
     #[test]
@@ -409,13 +305,12 @@ mod tests {
         let converter = Converter::new(Some(dict));
 
         // Exact match
-        let result = converter.convert("きょう");
-        assert!(result.contains(&"今日".to_string()));
-        assert!(result.contains(&"きょう".to_string())); // fallback
+        let result = converter.convert_with_segments("きょう");
+        assert!(result.combined_candidates.iter().any(|c| c == "今日"));
 
         // Another exact match
-        let result = converter.convert("あずき");
-        assert!(result.contains(&"小豆".to_string()));
+        let result = converter.convert_with_segments("あずき");
+        assert!(result.combined_candidates.iter().any(|c| c == "小豆"));
     }
 
     #[test]
@@ -425,9 +320,12 @@ mod tests {
 
         // "きょうは" should segment to "きょう" + "は"
         // "きょう" -> "今日", "は" -> no match, stays as-is
-        let result = converter.convert("きょうは");
+        let result = converter.convert_with_segments("きょうは");
         // First result should be combined: "今日" + "は" = "今日は"
-        assert!(result.iter().any(|c| c.contains("今日")));
+        assert!(result
+            .combined_candidates
+            .iter()
+            .any(|c| c.contains("今日")));
     }
 
     #[test]
@@ -436,7 +334,7 @@ mod tests {
         let converter = Converter::new(Some(dict));
 
         // No match in dictionary
-        let result = converter.convert("あいうえお");
-        assert!(result.contains(&"あいうえお".to_string()));
+        let result = converter.convert_with_segments("あいうえお");
+        assert!(result.combined_candidates.iter().any(|c| c == "あいうえお"));
     }
 }
