@@ -4,10 +4,28 @@
 //! the zenz model (GPT-2 based, specialized for Japanese input).
 //!
 //! Requires the `zenzai` feature to be enabled.
+//!
+//! ## zenz-v3 Prompt Format
+//!
+//! The model uses special Unicode characters as delimiters:
+//! - `\u{EE02}`: Context prefix (optional)
+//! - `\u{EE00}`: Input reading start
+//! - `\u{EE01}`: Output start
+//! - `</s>`: End of sequence
+//!
+//! Format: `\u{EE02}<context>\u{EE00}<hiragana>\u{EE01}<output></s>`
 
 use serde::Deserialize;
 #[cfg(feature = "zenzai")]
 use std::path::PathBuf;
+
+// zenz-v3 special tokens (Unicode Private Use Area)
+#[cfg(feature = "zenzai")]
+const ZENZ_INPUT_START: char = '\u{EE00}';
+#[cfg(feature = "zenzai")]
+const ZENZ_OUTPUT_START: char = '\u{EE01}';
+#[cfg(feature = "zenzai")]
+const ZENZ_CONTEXT: char = '\u{EE02}';
 
 /// Zenzai configuration
 #[derive(Debug, Clone, Deserialize)]
@@ -117,7 +135,7 @@ pub struct ZenzaiBackend {
 
 #[cfg(feature = "zenzai")]
 struct ZenzaiModel {
-    // llama-cpp-2 model instance will be stored here
+    model: llama_cpp_2::model::LlamaModel,
     _model_path: PathBuf,
 }
 
@@ -133,6 +151,9 @@ impl ZenzaiBackend {
 
     /// Initialize the model (lazy loading)
     pub fn initialize(&mut self) -> Result<(), ZenzaiError> {
+        use llama_cpp_2::model::params::LlamaModelParams;
+        use llama_cpp_2::model::LlamaModel;
+
         if self.model.is_some() {
             return Ok(());
         }
@@ -144,14 +165,46 @@ impl ZenzaiBackend {
 
         eprintln!("[zenzai] Loading model from: {}", model_path.display());
 
-        // TODO: Actually load the model using llama-cpp-2
-        // For now, just store the path
+        // Initialize llama.cpp backend
+        let backend = llama_cpp_2::llama_backend::LlamaBackend::init()
+            .map_err(|e| ZenzaiError::LoadError(format!("Failed to init backend: {}", e)))?;
+
+        // Configure model parameters
+        let model_params = LlamaModelParams::default();
+
+        // Load the model
+        let model = LlamaModel::load_from_file(&backend, &model_path, &model_params)
+            .map_err(|e| ZenzaiError::LoadError(format!("Failed to load model: {}", e)))?;
+
         self.model = Some(ZenzaiModel {
+            model,
             _model_path: model_path,
         });
 
         eprintln!("[zenzai] Model loaded successfully");
         Ok(())
+    }
+
+    /// Build prompt for zenz-v3 model
+    fn build_prompt(&self, reading: &str, context: Option<&str>) -> String {
+        let mut prompt = String::new();
+
+        // Add context if provided (zenz-v3 format: context comes first)
+        if let Some(ctx) = context {
+            if !ctx.is_empty() {
+                prompt.push(ZENZ_CONTEXT);
+                prompt.push_str(ctx);
+            }
+        }
+
+        // Add input reading
+        prompt.push(ZENZ_INPUT_START);
+        prompt.push_str(reading);
+
+        // Add output marker (model will generate after this)
+        prompt.push(ZENZ_OUTPUT_START);
+
+        prompt
     }
 
     /// Convert hiragana to kanji using neural network
@@ -160,27 +213,137 @@ impl ZenzaiBackend {
         reading: &str,
         context: Option<&str>,
     ) -> Result<Vec<String>, ZenzaiError> {
+        use llama_cpp_2::context::params::LlamaContextParams;
+        use llama_cpp_2::llama_batch::LlamaBatch;
+        use llama_cpp_2::token::LlamaToken;
+
         // Ensure model is loaded
         if self.model.is_none() {
             self.initialize()?;
         }
 
-        let _model = self.model.as_ref().ok_or(ZenzaiError::NotInitialized)?;
+        let zenzai_model = self.model.as_ref().ok_or(ZenzaiError::NotInitialized)?;
 
-        // TODO: Implement actual neural conversion
-        // For now, return the reading as-is (fallback behavior)
         eprintln!(
             "[zenzai] Converting: {} (context: {:?}, limit: {})",
             reading, context, self.config.inference_limit
         );
 
-        // Placeholder: return reading unchanged
-        // Real implementation would:
-        // 1. Tokenize the input (character-level + byte BPE)
-        // 2. Run inference with the GPT-2 model
-        // 3. Decode the output tokens
-        // 4. Return ranked candidates
-        Ok(vec![reading.to_string()])
+        // Build the prompt
+        let prompt = self.build_prompt(reading, context);
+        eprintln!("[zenzai] Prompt: {:?}", prompt);
+
+        // Create context for inference
+        let ctx_params = LlamaContextParams::default().with_n_ctx(std::num::NonZeroU32::new(512));
+
+        let mut ctx = zenzai_model
+            .model
+            .new_context(
+                &llama_cpp_2::llama_backend::LlamaBackend::init().map_err(|e| {
+                    ZenzaiError::InferenceError(format!("Backend init failed: {}", e))
+                })?,
+                ctx_params,
+            )
+            .map_err(|e| ZenzaiError::InferenceError(format!("Context creation failed: {}", e)))?;
+
+        // Tokenize the prompt
+        let tokens = zenzai_model
+            .model
+            .str_to_token(&prompt, llama_cpp_2::model::AddBos::Always)
+            .map_err(|e| ZenzaiError::InferenceError(format!("Tokenization failed: {}", e)))?;
+
+        eprintln!("[zenzai] Input tokens: {}", tokens.len());
+
+        // Create batch and add tokens
+        let mut batch = LlamaBatch::new(512, 1);
+        for (i, &token) in tokens.iter().enumerate() {
+            let is_last = i == tokens.len() - 1;
+            batch
+                .add(token, i as i32, &[0], is_last)
+                .map_err(|e| ZenzaiError::InferenceError(format!("Batch add failed: {}", e)))?;
+        }
+
+        // Decode the initial prompt
+        ctx.decode(&mut batch)
+            .map_err(|e| ZenzaiError::InferenceError(format!("Initial decode failed: {}", e)))?;
+
+        // Generate tokens (greedy decoding)
+        let mut output_tokens: Vec<LlamaToken> = Vec::new();
+        let max_tokens = self.config.inference_limit as usize * 10; // Allow reasonable output length
+        let mut n_cur = tokens.len();
+
+        // Get special token IDs for stopping
+        let eos_token = zenzai_model.model.token_eos();
+
+        for _ in 0..max_tokens {
+            // Get logits for the last token
+            let logits = ctx.get_logits_ith((n_cur - 1) as i32);
+
+            // Simple greedy sampling: pick the token with highest logit
+            let mut best_token = LlamaToken::new(0);
+            let mut best_logit = f32::NEG_INFINITY;
+
+            for (token_id, &logit) in logits.iter().enumerate() {
+                if logit > best_logit {
+                    best_logit = logit;
+                    best_token = LlamaToken::new(token_id as i32);
+                }
+            }
+
+            // Check for end of sequence
+            if best_token == eos_token {
+                break;
+            }
+
+            // Decode the token to check for special markers
+            let token_str = zenzai_model
+                .model
+                .token_to_str(best_token, llama_cpp_2::model::Special::Tokenize)
+                .unwrap_or_default();
+
+            // Stop if we hit the input start marker (shouldn't happen, but safety check)
+            if token_str.contains(ZENZ_INPUT_START) {
+                break;
+            }
+
+            output_tokens.push(best_token);
+
+            // Prepare next batch
+            batch.clear();
+            batch
+                .add(best_token, n_cur as i32, &[0], true)
+                .map_err(|e| ZenzaiError::InferenceError(format!("Batch add failed: {}", e)))?;
+
+            // Decode
+            ctx.decode(&mut batch)
+                .map_err(|e| ZenzaiError::InferenceError(format!("Decode failed: {}", e)))?;
+
+            n_cur += 1;
+        }
+
+        // Decode output tokens to string
+        let mut output = String::new();
+        for token in &output_tokens {
+            if let Ok(s) = zenzai_model
+                .model
+                .token_to_str(*token, llama_cpp_2::model::Special::Tokenize)
+            {
+                output.push_str(&s);
+            }
+        }
+
+        // Clean up the output (remove </s> if present)
+        let output = output.trim_end_matches("</s>").to_string();
+
+        eprintln!("[zenzai] Output: {}", output);
+
+        // Return the result (single candidate for now)
+        if output.is_empty() {
+            // Fallback to reading if no output
+            Ok(vec![reading.to_string()])
+        } else {
+            Ok(vec![output, reading.to_string()])
+        }
     }
 
     /// Check if the backend is ready
@@ -189,6 +352,7 @@ impl ZenzaiBackend {
     }
 
     /// Get configuration
+    #[allow(dead_code)]
     pub fn config(&self) -> &ZenzaiConfig {
         &self.config
     }

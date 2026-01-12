@@ -61,7 +61,7 @@ impl Server {
     /// Check if Zenzai is enabled and ready
     #[cfg(feature = "zenzai")]
     fn is_zenzai_enabled(&self) -> bool {
-        self.zenzai.as_ref().map_or(false, |z| z.is_ready())
+        self.zenzai.as_ref().is_some_and(|z| z.is_ready())
     }
 
     #[cfg(not(feature = "zenzai"))]
@@ -89,6 +89,8 @@ impl Server {
                 });
 
                 // Initialize Zenzai if requested
+                // Can't use map() here due to #[cfg] attributes inside
+                #[allow(clippy::manual_map)]
                 let zenzai_enabled = if let Some(config) = zenzai {
                     #[cfg(feature = "zenzai")]
                     {
@@ -119,12 +121,55 @@ impl Server {
                 cursor: _,
                 options: _,
             } => {
-                let result = self.converter.convert_with_segments(&reading);
+                // Try Zenzai first if enabled
+                #[cfg(feature = "zenzai")]
+                let zenzai_candidates = if self.is_zenzai_enabled() {
+                    if let Some(ref mut zenzai) = self.zenzai {
+                        match zenzai.convert(&reading, None) {
+                            Ok(candidates) => {
+                                eprintln!("[handler] Zenzai conversion successful");
+                                Some(candidates)
+                            }
+                            Err(e) => {
+                                eprintln!("[handler] Zenzai conversion failed: {}, falling back to dictionary", e);
+                                None
+                            }
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                #[cfg(not(feature = "zenzai"))]
+                let zenzai_candidates: Option<Vec<String>> = None;
+
+                // Get dictionary-based result for segments
+                let dict_result = self.converter.convert_with_segments(&reading);
+
+                // Merge candidates: Zenzai first, then dictionary
+                let candidates = if let Some(mut zenzai_cands) = zenzai_candidates {
+                    // Add dictionary candidates that aren't already in Zenzai results
+                    for cand in dict_result.combined_candidates.iter() {
+                        if !zenzai_cands.contains(cand) {
+                            zenzai_cands.push(cand.clone());
+                        }
+                    }
+                    zenzai_cands
+                } else {
+                    dict_result.combined_candidates
+                };
+
                 Response::ConvertResult {
                     seq,
                     session_id,
-                    candidates: result.combined_candidates,
-                    segments: result.segments.into_iter().map(SegmentInfo::from).collect(),
+                    candidates,
+                    segments: dict_result
+                        .segments
+                        .into_iter()
+                        .map(SegmentInfo::from)
+                        .collect(),
                 }
             }
             Request::Commit {
