@@ -89,6 +89,23 @@ impl Dictionary {
         self.okuri_nasi.get(reading)
     }
 
+    /// Look up candidates with fallback to the reading itself
+    ///
+    /// Returns candidates from dictionary if found, otherwise returns the reading.
+    /// Always includes the reading as the last candidate if not already present.
+    pub fn lookup_with_fallback(&self, reading: &str) -> Vec<String> {
+        match self.okuri_nasi.get(reading) {
+            Some(candidates) => {
+                let mut result = candidates.clone();
+                if !result.contains(&reading.to_string()) {
+                    result.push(reading.to_string());
+                }
+                result
+            }
+            None => vec![reading.to_string()],
+        }
+    }
+
     /// Check if dictionary is empty
     #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
