@@ -246,7 +246,12 @@ function M.start(opts, callback)
   -- Include zenzai configuration if available
   local azuki_config = require("azuki.config")
   local zenzai_config = azuki_config.get("zenzai")
-  if zenzai_config and zenzai_config.enabled then
+  -- Support both boolean (legacy) and table configs
+  if type(zenzai_config) == "boolean" then
+    if zenzai_config then
+      init_msg.zenzai = { enabled = true }
+    end
+  elseif type(zenzai_config) == "table" and zenzai_config.enabled then
     init_msg.zenzai = zenzai_config
   end
 
